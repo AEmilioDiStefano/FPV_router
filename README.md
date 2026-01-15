@@ -137,7 +137,7 @@ ip link
 
 <br>  
 
-**ANOTHER WAY** to get the interface name for your USB WiFi Dongle is to enter:
+### ANOTHER WAY to get the interface name for your USB WiFi Dongle is to enter:
 
 ```shell
 iw dev
