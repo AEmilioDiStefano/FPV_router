@@ -179,6 +179,13 @@ sudo systemctl stop hostapd
 sudo systemctl stop dnsmasq
 ```
 
+**FIX** resolve.conf
+
+```shell
+sudo rm /etc/resolv.conf
+echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
+```
+
 <br>  
 <br>  
 <br>  
