@@ -159,6 +159,13 @@ sudo systemctl disable systemd-resolved
 sudo systemctl stop systemd-resolved
 ```
 
+**FIX** resolve.conf
+
+```shell
+sudo rm /etc/resolv.conf
+echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
+```
+
 <br>  
 
 **INSTALL** the following packages:
@@ -177,13 +184,6 @@ sudo apt install -y \
 ```shell
 sudo systemctl stop hostapd
 sudo systemctl stop dnsmasq
-```
-
-**FIX** resolve.conf
-
-```shell
-sudo rm /etc/resolv.conf
-echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
 ```
 
 <br>  
