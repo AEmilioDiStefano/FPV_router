@@ -297,7 +297,7 @@ default via 192.168.x.1 dev wlx98ba5f8094f7 metric 100
 
 **IMPORTANT NOTE:  If your USB WiFi Dongle interface is named differently than wlx98ba5f8094f7, then THAT NAME is what you should see im place of wlx98ba5f8094f7 in the above output**.
 
-**If wlan0 is still the default (if wlan0 appears in the deefault line rather than the name of your USB WiFi dongle interface), then go back to Step 3 and make sure you follow the instrudctions correctly.**
+**If wlan0 is still the default** (if wlan0 appears in the default line rather than the name of your USB WiFi Dongle interface), **then go back to Step 3 and make sure you follow the instrudctions correctly.**
 
 
 
