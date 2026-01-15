@@ -1,6 +1,10 @@
 # FPV_router
 This repository contains instructions for building a powerful FPV robotics router from a Raspberry Pi 4 and a common WiFi dongle.  The router is optimized for low-latency first-person-view robotics operations.
 
+<br>  
+<br>  
+<br>  
+
 # MATERIALS: 
 
 ### ONE Raspberry Pi 4 (5 also works)
@@ -67,7 +71,39 @@ Click **EDIT SETTINGS** and another pop-up will appear where you are prompted to
 
 # 2. SSH into your Raspberry Pi
 
-## 2.1 
+<br>
+
+## 2.1 Open a terminal and enter the following command:
+
+```shell
+ssh <username>@<hostname>.local
+```
+
+**REMEMBER TO REPLACE <username> and <hostname>** with the username and hostname you set in **Step 1**!
+
+Example:
+
+```shell
+ssh router@gamboa.local
+```
+
+**If you have any issues**, try using **arp-scan**:
+
+```shell
+sudo arp-scan --localnet
+```
+
+**This will show all devices currently connected to your neteork by IP address**.  If you are unable to SSH into your Pi using <hostname>.local, try using the following command:
+
+```shell
+ssh router@<ip address of device>
+```
+
+<br>
+<br>
+<br>
+
+# 3. 
 
 
 
