@@ -17,11 +17,17 @@ This repository contains instructions for building a powerful FPV robotics route
 
 # INSTRUCTIONS
 
+<br>
+
 # 1. Prepare your SD Card for the Raspberry Pi
 
 ### NOTE: Use the official Raspberry Pi Imager!
 
+<br>
+
 ## 1.1 Insert your SD card in to your laptop via USB adapter or full-sized SD adapter
+
+<br>
 
 ## 1.2 Open the Raspberry Pi Imager and enter the following specifications:
 
@@ -30,6 +36,8 @@ This repository contains instructions for building a powerful FPV robotics route
 **Ubuntu Server 24.04.3 LTS (64-BIT)** as your **Operating System** (this will be under "General Purpose OS" and then "Ubuntu")
 
 **The SD card you would like to flash** as your **Storage**
+
+<br>
 
 ## 1.3 Set your initial specifications for the Pi
 
@@ -52,6 +60,10 @@ Click **EDIT SETTINGS** and another pop-up will appear where you are prompted to
 **Click SAVE** at the bottom of the **EDIT SETTINGS** pop-up window, which should take you back to the **"Would you like to apply custom OS settings?"** pop-up.  Now that you have set your customized settings, click **YES**.
 
 **WAIT FOR THE PROCESS TO BE COMPLETED** before removing your micro-SD card from your laptop.
+
+<br>  
+<br>  
+<br>  
 
 # 2. SSH into your Raspberry Pi
 
