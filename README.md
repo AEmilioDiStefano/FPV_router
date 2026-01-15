@@ -25,7 +25,7 @@ This repository contains instructions for building a powerful FPV robotics route
 
 # 1. Prepare your SD Card for the Raspberry Pi
 
-### NOTE: Use the official Raspberry Pi Imager!
+###  NOTE: Use the official Raspberry Pi Imager!
 
 <br>
 
