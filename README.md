@@ -131,7 +131,7 @@ ip link
 
 **INTERFACE 2** will likely be called **eth0** but may be called something else on your device. 
 
-**INTERFACE 3** will likely be called **wlan0** but may be called somethign else on your device.  **If wlan0 is not the name of this interface, then write down your actual interface name for use in this tutorial** and **replace wlan0** throughout this tutorial** with your actual interface name set for the WiFi Dongle.
+**INTERFACE 3** will likely be called **wlan0** but may be called somethign else on your device.  **If wlan0 is not the name of this interface, then write down your actual interface name for use in this tutorial** and **replace wlan0 throughout this tutorial** with your actual interface name set for the WiFi Dongle.
 
 **INTERFACE 4** will almost certainly reference **the interface created by your USB WiFi Dongle** (which at this point should be plugged into your Raspberry Pi).  A common default name for this interface on the Pi is  **wlx98ba5f8094f7**.  If this interface has a different name, then **TAKE NOTE OF THIS INTERFACE NAME** (you will be using it later) and **replace wlx98ba5f8094f7 throughout this tutorial** with your actual interface name set for the WiFi Dongle. 
 
