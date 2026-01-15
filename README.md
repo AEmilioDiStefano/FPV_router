@@ -76,7 +76,7 @@ Click **EDIT SETTINGS** and another pop-up will appear where you are prompted to
 ## 2.1 Open a terminal and enter the following command:
 
 ```shell
-ssh <username>@<hostname>.local
+ssh [username]@[hostname].local
 ```
 
 **REMEMBER TO REPLACE <username> and <hostname>** with the username and hostname you set in **Step 1**!
@@ -96,7 +96,7 @@ sudo arp-scan --localnet
 **This will show all devices currently connected to your neteork by IP address**.  If you are unable to SSH into your Pi using <hostname>.local, try using the following command:
 
 ```shell
-ssh router@<ip address of device>
+ssh router@[ip address of Pi]
 ```
 
 <br>
