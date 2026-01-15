@@ -135,6 +135,8 @@ ip link
 
 **INTERFACE 4** will almost certainly reference **the interface created by your USB WiFi Dongle** (which at this point should be plugged into your Raspberry Pi).  A common default name for this interface on the Pi is  **wlx98ba5f8094f7**.  If this interface has a different name, then **TAKE NOTE OF THIS INTERFACE NAME** (you will be using it later) and **replace wlx98ba5f8094f7** throughout this tutorial** with your actual interface name set for the WiFi Dongle. 
 
+<br>  
+
 **ANOTHER WAY** to get the interface name for your USB WiFi Dongle is to enter:
 
 ```shell
