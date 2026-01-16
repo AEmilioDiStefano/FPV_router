@@ -302,7 +302,9 @@ default via 192.168.x.1 dev wlx98ba5f8094f7 metric 100
 
 **If wlan0 is still the default** (if wlan0 appears in the default line rather than the name of your USB WiFi Dongle interface), **then go back to Step 3 and make sure to follow the instructions perfectly.**
 
-
+# TO BE CONTINUED 
+  ### - Emilio
+  January 6, 2025
 
 
 
