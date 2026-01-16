@@ -304,11 +304,19 @@ default via 192.168.x.1 dev wlx98ba5f8094f7 metric 100
 
 <br>  
 <br>  
+
+# TO BE CONTINUED
+  At this point you have a Raspberry Pi running Ubuntu and recieving WiFi through a WiFi Dongle with all of the pagkages you need for this project installed and ready to go.  The next steps will involve setting up the WiFi hardware built-in to the Raspberry Pi to create its own network with highly customiozable rules and automation.  The rest of this tutorial is coming soon.
+  
+  ### - Emilio
+  January 16, 2025
+
+<br>  
 <br>  
 
-# TO BE CONTINUED 
-  ### - Emilio
-  January 6, 2025
+# 6 
 
+<br>  
+<br>  
 
 
