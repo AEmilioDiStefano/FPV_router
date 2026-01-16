@@ -1,5 +1,8 @@
 # FPV_router
-This repository contains instructions for building a powerful FPV robotics router from a Raspberry Pi 4 and a common WiFi Dongle.  The router is optimized for low-latency first-person-view robotics operations.
+
+![host-and-port](images/FPV-router.png)
+
+This repository contains instructions for building a powerful **FPV robotics router** from a Raspberry Pi 4 and a common WiFi Dongle.  The router is optimized for **low-latency first-person-view robotics operations**.
 
 <br>  
 <br>  
