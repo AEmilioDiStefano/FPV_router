@@ -57,22 +57,22 @@ Use the **official Raspberry Pi Imager**.
 
 When prompted, choose **Edit Settings**.
 
-Set your **Linux hostname** and **Linux Password**.
-
-#### Example:
-
 Set:
-- **hostname**: `gamboa`
-- **username**: `router`
-- **password**: `secure_password_DO_NOT_USE_THIS_ONE!`
+- **hostname**: choose the Linux hostname you want to use for this Pi
+- **username**: choose the Linux username you want to use over SSH
+- **password**: choose a password for that Linux user
+
+Example only: you might choose a hostname like gamboa, a username like router, and a password like secure_password_DO_NOT_USE_THIS_ONE!.
 
 Under **Configure Wireless LAN**, set the **initial upstream Wi-Fi** you want the Pi to use on first boot.
 
 This is your internet source for setup, such as home or office Wi-Fi.
 
-Example:
-- SSID: `NAME_OF_YOUR_WIFI`
-- Password: `YOUR_REAL_WIFI_PASSWORD`
+Set:
+- **SSID**: your upstream Wi-Fi network name
+- **Password**: your upstream Wi-Fi password
+
+Example only: an upstream Wi-Fi could be called WorkshopWiFi24, with a matching password such as ExamplePassword123.
 
 #### Services tab
 
@@ -122,11 +122,11 @@ This avoids common SSH discovery problems.
 
 First try:
 
-`ssh <USERNAME>@<HOSTNAME>.local`
+```bash
+ssh <LINUX_USERNAME>@<LINUX_HOSTNAME>.local
+```
 
-#### EXAMPLE:
-
-`ssh router@gamboa.local`
+Example only: if the Linux username were router and the Linux hostname were gamboa, those are the values that would replace the placeholders in the command above.
 
 If that does not work, scan your local network from the laptop:
 
@@ -137,7 +137,7 @@ sudo arp-scan --localnet
 Look for the Pi’s IP, then connect with:
 
 ```bash
-ssh <USERNAME>>@<PI_IP_ADDRESS>
+ssh <LINUX_USERNAME>@<PI_IP_ADDRESS>
 ```
 
 Once in, everything else in this tutorial is done from your laptop over SSH.
@@ -189,13 +189,23 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
-ROUTER_HOME="$(getent passwd router | cut -d: -f6)"
-if [ -z "${ROUTER_HOME}" ]; then
-  echo "ERROR: user 'router' not found. Set the username to 'router' in Raspberry Pi Imager first." >&2
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+if [ -z "${TARGET_USER}" ] || [ "${TARGET_UID}" -eq 0 ]; then
+  echo "ERROR: Could not determine which regular Linux user should own the router config files." >&2
+  echo "Run this command with sudo from the Linux user account you plan to use over SSH." >&2
   exit 1
 fi
 
-ENV_FILE="${ROUTER_HOME}/fpv-router.env"
+TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+if [ -z "${TARGET_GROUP}" ] || [ -z "${USER_HOME}" ]; then
+  echo "ERROR: Could not determine the home directory for ${TARGET_USER}." >&2
+  exit 1
+fi
+
+CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+ENV_FILE="${CONFIG_DIR}/router.env"
 
 mapfile -t WIFI_IFACES < <(iw dev | awk '$1=="Interface"{print $2}')
 
@@ -234,7 +244,8 @@ if [ -z "$AP_IF" ]; then
   exit 1
 fi
 
-install -o router -g router -m 600 /dev/null "${ENV_FILE}"
+install -d -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 700 "${CONFIG_DIR}"
+install -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 600 /dev/null "${ENV_FILE}"
 
 cat >"${ENV_FILE}" <<ENV
 export WAN_IF="${WAN_IF}"
@@ -244,12 +255,12 @@ export LAN_CIDR="10.42.0.1/24"
 export LAN_NET="10.42.0.0/24"
 export DHCP_START="10.42.0.50"
 export DHCP_END="10.42.0.150"
-export AP_SSID="Rodriguez"
-export AP_PSK="ChangeThisPasswordNow"
+export AP_SSID="<SET_AP_SSID>"
+export AP_PSK="<SET_AP_PASSWORD>"
 export WIFI_COUNTRY="US"
 ENV
 
-chown router:router "${ENV_FILE}"
+chown "${TARGET_USER}:${TARGET_GROUP}" "${ENV_FILE}"
 chmod 600 "${ENV_FILE}"
 
 echo
@@ -266,21 +277,25 @@ sudo chmod +x /usr/local/sbin/fpv-router-detect-ifaces
 
 ```bash
 sudo /usr/local/sbin/fpv-router-detect-ifaces
-source ~/fpv-router.env
+source ~/.config/fpv-router/router.env
 ```
 
 ### 5.3 Load the variables automatically in future shells
 
 ```bash
-grep -qxF 'source ~/fpv-router.env 2>/dev/null || true' ~/.bashrc || \
-echo 'source ~/fpv-router.env 2>/dev/null || true' >> ~/.bashrc
+LINE='source ~/.config/fpv-router/router.env 2>/dev/null || true'
+grep -qxF "$LINE" ~/.bashrc || printf '%s\n' "$LINE" >> ~/.bashrc
 
 source ~/.bashrc
 ```
 
 ### 5.4 Verify what was detected
 
-If you want a different AP name or password, edit `~/fpv-router.env` now and then run `source ~/.bashrc` again. `AP_PSK` must be between 8 and 63 characters.
+Before continuing, open `~/.config/fpv-router/router.env` in a text editor and replace the placeholder values in `AP_SSID` and `AP_PSK`.
+
+`AP_PSK` must be between 8 and 63 characters.
+
+Example only: the AP name could be Rodriguez and the AP password could be ChangeThisPasswordNow.
 
 ```bash
 echo "WAN_IF=$WAN_IF"
@@ -302,11 +317,12 @@ This is how the router will remember multiple upstream networks later.
 ### 6.1 Create the upstream Wi-Fi file
 
 ```bash
-sudo tee /root/uplinks.conf >/dev/null <<'EOF'
-IZZI-E81F|YOUR_REAL_WIFI_PASSWORD
+sudo mkdir -p /etc/fpv-router
+sudo tee /etc/fpv-router/uplinks.conf >/dev/null <<'EOF'
+<UPSTREAM_WIFI_SSID>|<UPSTREAM_WIFI_PASSWORD>
 EOF
 
-sudo chmod 600 /root/uplinks.conf
+sudo chmod 600 /etc/fpv-router/uplinks.conf
 ```
 
 Each line in this file is:
@@ -315,7 +331,9 @@ Each line in this file is:
 SSID|PASSWORD
 ```
 
-Use one SSID per line. Do not put the `|` character inside the SSID or password. The first line should match the upstream Wi-Fi you used for the Pi's first boot.
+Use one SSID per line. Do not put the `|` character inside the SSID or password. Replace the placeholder line with the actual upstream Wi-Fi credentials you want the USB dongle to use first.
+
+Example only: one remembered upstream Wi-Fi might be called WorkshopWiFi24, and another might be called FieldHotspot2G.
 
 ---
 
@@ -335,13 +353,22 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
-ROUTER_HOME="$(getent passwd router | cut -d: -f6)"
-if [ -z "${ROUTER_HOME}" ]; then
-  echo "ERROR: user 'router' not found." >&2
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+if [ -z "${TARGET_USER}" ] || [ "${TARGET_UID}" -eq 0 ]; then
+  echo "ERROR: Could not determine which regular Linux user should own the router environment file." >&2
   exit 1
 fi
 
-ENV_FILE="${ROUTER_HOME}/fpv-router.env"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+if [ -z "${USER_HOME}" ]; then
+  echo "ERROR: Could not determine the home directory for ${TARGET_USER}." >&2
+  exit 1
+fi
+
+CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+ENV_FILE="${CONFIG_DIR}/router.env"
+UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "ERROR: ${ENV_FILE} not found. Run fpv-router-detect-ifaces first." >&2
@@ -350,8 +377,18 @@ fi
 
 source "${ENV_FILE}"
 
-if [ ! -f /root/uplinks.conf ]; then
-  echo "ERROR: /root/uplinks.conf not found." >&2
+if [ ! -f "${UPLINKS_FILE}" ]; then
+  echo "ERROR: ${UPLINKS_FILE} not found." >&2
+  exit 1
+fi
+
+if [ -z "${AP_SSID:-}" ] || [ -z "${AP_PSK:-}" ]; then
+  echo "ERROR: AP_SSID and AP_PSK must both be set in ${ENV_FILE}." >&2
+  exit 1
+fi
+
+if [ "${#AP_PSK}" -lt 8 ] || [ "${#AP_PSK}" -gt 63 ]; then
+  echo "ERROR: AP_PSK must be between 8 and 63 characters." >&2
   exit 1
 fi
 
@@ -371,24 +408,24 @@ while IFS='|' read -r SSID PSK; do
   [ -z "${SSID}" ] && continue
   case "$SSID" in \#*) continue ;; esac
   if [ -z "${PSK}" ]; then
-    echo "ERROR: Missing password for SSID '${SSID}' in /root/uplinks.conf." >&2
+    echo "ERROR: Missing password for SSID '${SSID}' in ${UPLINKS_FILE}." >&2
     exit 1
   fi
   if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
-    echo "ERROR: '|' is reserved as the SSID/password separator in /root/uplinks.conf." >&2
+    echo "ERROR: '|' is reserved as the SSID/password separator in ${UPLINKS_FILE}." >&2
     exit 1
   fi
   if [ -n "${SEEN_SSIDS[$SSID]:-}" ]; then
-    echo "ERROR: Duplicate SSID '${SSID}' in /root/uplinks.conf." >&2
+    echo "ERROR: Duplicate SSID '${SSID}' in ${UPLINKS_FILE}." >&2
     exit 1
   fi
   SEEN_SSIDS["$SSID"]=1
   ACCESS_POINTS_BLOCK+="        \"$(yaml_escape "${SSID}")\":\n"
   ACCESS_POINTS_BLOCK+="          password: \"$(yaml_escape "${PSK}")\"\n"
-done < /root/uplinks.conf
+done < "${UPLINKS_FILE}"
 
 if [ -z "${ACCESS_POINTS_BLOCK}" ]; then
-  echo "ERROR: No upstream Wi-Fi networks were found in /root/uplinks.conf." >&2
+  echo "ERROR: No upstream Wi-Fi networks were found in ${UPLINKS_FILE}." >&2
   exit 1
 fi
 
@@ -408,7 +445,6 @@ network:
 $(printf '%b' "${ACCESS_POINTS_BLOCK}")
 EOF_NETPLAN
 
-chown root:root /etc/netplan/01-router.yaml
 chmod 600 /etc/netplan/01-router.yaml
 
 mkdir -p /etc/systemd/network
@@ -591,7 +627,7 @@ sudo arp-scan --localnet
 Then reconnect:
 
 ```bash
-ssh router@<WAN_IP_OF_THE_PI>
+ssh <LINUX_USERNAME>@<WAN_IP_OF_THE_PI>
 ```
 
 After reconnecting, reload the environment:
@@ -747,8 +783,8 @@ With the tutorial above, it should be `type AP`.
 
 Connect your laptop, phone, or robot to:
 
-- **SSID**: the value stored in `AP_SSID` inside `~/fpv-router.env` (default: `Rodriguez`)
-- **Password**: the value stored in `AP_PSK` inside `~/fpv-router.env`
+- **SSID**: the value stored in `AP_SSID` inside `~/.config/fpv-router/router.env`
+- **Password**: the value stored in `AP_PSK` inside `~/.config/fpv-router/router.env`
 
 ### 16.1 Verify DHCP on the Pi
 
@@ -797,7 +833,7 @@ What should now happen automatically:
 
 - the Pi boots
 - the USB dongle reconnects to any remembered upstream Wi-Fi that is available
-- the AP appears with the SSID from `AP_SSID` (default: `Rodriguez`)
+- the AP appears with the SSID from `AP_SSID`
 - clients connect and get `10.42.0.x`
 - clients get internet through the upstream Wi-Fi
 - no monitor is needed
@@ -827,14 +863,16 @@ fi
 
 SSID="$1"
 PSK="$2"
+UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
 
 if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
-  echo "ERROR: '|' is reserved as the separator in /root/uplinks.conf." >&2
+  echo "ERROR: '|' is reserved as the separator in ${UPLINKS_FILE}." >&2
   exit 1
 fi
 
-touch /root/uplinks.conf
-chmod 600 /root/uplinks.conf
+mkdir -p /etc/fpv-router
+touch "${UPLINKS_FILE}"
+chmod 600 "${UPLINKS_FILE}"
 
 TMP_FILE="$(mktemp)"
 awk -F'|' -v ssid="${SSID}" -v psk="${PSK}" '
@@ -842,9 +880,9 @@ BEGIN { updated=0 }
 $1 == ssid { if (!updated) { print ssid "|" psk; updated=1 } next }
 { print }
 END { if (!updated) print ssid "|" psk }
-' /root/uplinks.conf > "${TMP_FILE}"
+' "${UPLINKS_FILE}" > "${TMP_FILE}"
 
-install -m 600 "${TMP_FILE}" /root/uplinks.conf
+install -m 600 "${TMP_FILE}" "${UPLINKS_FILE}"
 rm -f "${TMP_FILE}"
 
 /usr/local/sbin/render-fpv-router-config
@@ -866,13 +904,13 @@ sudo chmod +x /usr/local/sbin/add-uplink-wifi
 Connect to the router through the AP network:
 
 ```bash
-ssh router@10.42.0.1
+ssh <LINUX_USERNAME>@10.42.0.1
 ```
 
 Then run:
 
 ```bash
-sudo add-uplink-wifi "NewNetworkName" "NewNetworkPassword"
+sudo add-uplink-wifi "<NEW_UPSTREAM_WIFI_SSID>" "<NEW_UPSTREAM_WIFI_PASSWORD>"
 ```
 
 This:
