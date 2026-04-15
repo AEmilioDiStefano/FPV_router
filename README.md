@@ -160,7 +160,11 @@ Once in, everything else in this tutorial is done from your laptop over SSH.
 
 Run this step once after the first SSH login, even on a freshly flashed microSD card.
 
-On a fresh flash, it should leave the Pi in the same clean pre-router state and reboot cleanly. On a partially configured card, it removes the generated router config, restores the original cloud-init networking path used for first-boot SSH, clears saved NAT rules, and reboots the Pi so you can continue from the normal pre-router state without reflashing.
+This reset flow now checks first whether anything actually needs to be cleaned up.
+
+On a freshly flashed microSD card, or on any Pi that is already in the clean pre-router state, it prints that no reset is needed and returns you to the same SSH prompt without rebooting.
+
+If it finds router-specific system state from an earlier attempt that would interfere with a clean rerun, it removes those artifacts, restores the normal first-boot-style network path, and then reboots so you can continue from the normal pre-router state without reflashing.
 
 ### 3.1 Create the reset script
 
@@ -178,6 +182,8 @@ TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
 TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
 TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
 USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+RESET_NEEDED=0
+declare -a RESET_REASONS=()
 
 CONFIG_DIR=""
 BASHRC_FILE=""
@@ -185,6 +191,73 @@ if [ -n "${TARGET_USER}" ] && [ "${TARGET_UID}" -ge 1 ] && [ -n "${USER_HOME}" ]
   CONFIG_DIR="${USER_HOME}/.config/fpv-router"
   BASHRC_FILE="${USER_HOME}/.bashrc"
 fi
+
+mark_reset_needed() {
+  local reason="$1"
+  RESET_NEEDED=1
+  RESET_REASONS+=("${reason}")
+}
+
+check_path_for_reset() {
+  local path="$1"
+  local reason="$2"
+  if [ -e "${path}" ]; then
+    mark_reset_needed "${reason}"
+  fi
+}
+
+check_unit_active_for_reset() {
+  local unit="$1"
+  if systemctl is-active --quiet "${unit}" 2>/dev/null; then
+    mark_reset_needed "${unit} is active"
+  fi
+}
+
+check_unit_enabled_for_reset() {
+  local unit="$1"
+  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+    mark_reset_needed "${unit} is enabled"
+  fi
+}
+
+check_path_for_reset /etc/netplan/01-router.yaml "router netplan file exists"
+check_path_for_reset /etc/systemd/network/11-fpv-ap.network "AP-side networkd file exists"
+check_path_for_reset /etc/systemd/network/10-fpv-wan.network "WAN-side networkd file exists"
+check_path_for_reset /etc/systemd/system/wifi-powersave-off.service "wifi-powersave-off service file exists"
+check_path_for_reset /etc/systemd/system/hostapd.service.d/override.conf "hostapd override exists"
+check_path_for_reset /etc/sysctl.d/99-router.conf "router sysctl file exists"
+check_path_for_reset /etc/sysctl.d/99-fpv.conf "FPV sysctl file exists"
+check_path_for_reset /etc/systemd/journald.conf.d/volatile.conf "journald override exists"
+check_path_for_reset /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg "cloud-init networking is disabled"
+check_path_for_reset /etc/netplan/50-cloud-init.yaml.disabled "cloud-init netplan file is still disabled"
+check_path_for_reset /etc/iptables/rules.v4 "saved IPv4 iptables rules exist"
+check_path_for_reset /etc/iptables/rules.v6 "saved IPv6 iptables rules exist"
+
+check_unit_active_for_reset hostapd.service
+check_unit_active_for_reset dnsmasq.service
+check_unit_active_for_reset wifi-powersave-off.service
+check_unit_active_for_reset netfilter-persistent.service
+
+check_unit_enabled_for_reset hostapd.service
+check_unit_enabled_for_reset dnsmasq.service
+check_unit_enabled_for_reset wifi-powersave-off.service
+check_unit_enabled_for_reset netfilter-persistent.service
+
+if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
+  mark_reset_needed "router-side static IP 10.42.0.1/24 is still present"
+fi
+
+if [ "${RESET_NEEDED}" -eq 0 ]; then
+  echo
+  echo "No reset is needed."
+  echo "This Pi already looks like a clean pre-router system, so you can continue to Step 4 in this same SSH session."
+  exit 0
+fi
+
+echo
+echo "A reset is needed. Cleaning up the following router-state indicators:"
+printf '  - %s\n' "${RESET_REASONS[@]}"
+echo
 
 disable_unit_if_present() {
   local unit="$1"
@@ -266,14 +339,15 @@ sudo chmod +x /usr/local/sbin/fpv-router-reset-for-retry
 sudo /usr/local/sbin/fpv-router-reset-for-retry
 ```
 
+If the script prints `No reset is needed.`, stay in the same SSH session and continue directly to Step 4.
+
+If it says a reset is needed and then your SSH session disconnects, wait for the Pi to reboot, SSH back in the same way you did in Step 2, and then run Step 3.3.
+
 ### 3.3 Check that reset worked properly
 
-After the Pi reboots, 
+Only run this step if the reset script actually rebooted the Pi.
 
-### SSH BACK INTO YOUR PI!
-### (just like we did in Step 2)
-
-Then run:
+After the Pi finishes rebooting, SSH back into it the same way you did in Step 2, then run:
 
 ```bash
 bash <<'EOF'
@@ -357,7 +431,9 @@ EOF
 
 ### 3.4 Continue after the reboot
 
-If Step 3 passed, continue with Step 4.
+If the reset script reported that no reset was needed, continue with Step 4 in the same SSH session.
+
+If the reset script rebooted the Pi and Step 3.3 passed afterwards, continue with Step 4.
 
 ---
 
