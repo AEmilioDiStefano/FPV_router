@@ -120,13 +120,15 @@ This avoids common SSH discovery problems.
 
 ## 3. SSH into the Pi
 
-First try:
+SSH into the Pi with the following command:
 
-```bash
-ssh <LINUX_USERNAME>@<LINUX_HOSTNAME>.local
-```
+**EXAMPLE ONLY**:
 
-Example only: if the Linux username were router and the Linux hostname were gamboa, those are the values that would replace the placeholders in the command above.
+`ssh <LINUX_USERNAME>@<LINUX_HOSTNAME>.local`
+
+The command above is an **EXAMPLE ONLY!**  If the Linux username were `router` and the Linux hostname were `gamboa`, those are the values that would replace the placeholders in the command above.  The command would then look like: 
+
+`ssh robot@gamboa.local`
 
 If that does not work, scan your local network from the laptop:
 
