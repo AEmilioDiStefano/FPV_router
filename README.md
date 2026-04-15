@@ -268,7 +268,12 @@ sudo /usr/local/sbin/fpv-router-reset-for-retry
 
 ### 3.3 Check that reset worked properly
 
-After the Pi reboots, reconnect the same way you did in Step 2, then run:
+After the Pi reboots, 
+
+### SSH BACK INTO YOUR PI!
+### (just like we did in Step 2)
+
+Then run:
 
 ```bash
 bash <<'EOF'
