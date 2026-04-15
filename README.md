@@ -122,9 +122,11 @@ This avoids common SSH discovery problems.
 
 First try:
 
-```bash
-ssh router@gamboa.local
-```
+`ssh <USERNAME>@<HOSTNAME>.local`
+
+#### EXAMPLE:
+
+`ssh router@gamboa.local`
 
 If that does not work, scan your local network from the laptop:
 
@@ -135,7 +137,7 @@ sudo arp-scan --localnet
 Look for the Pi’s IP, then connect with:
 
 ```bash
-ssh router@<PI_IP_ADDRESS>
+ssh <USERNAME>>@<PI_IP_ADDRESS>
 ```
 
 Once in, everything else in this tutorial is done from your laptop over SSH.
