@@ -28,7 +28,7 @@ Additional repo docs:
 
 ---
 
-## 0. Materials
+## Materials
 
 You need:
 
@@ -40,6 +40,128 @@ You need:
 - Optional but recommended:
   - **high-endurance microSD card**
   - **UPS hat with batteries**
+
+---
+
+## 0. Reset To A Clean Retry State Without Reflashing
+
+If the Pi already has a partial or failed router setup on the microSD card, run this step before starting again.
+
+If the microSD card is a fresh flash of Ubuntu Server and you have not run any router steps on it yet, you can skip this step.
+
+This reset flow is also safe to run on a freshly flashed card. On a partially configured card, it removes the generated router config, restores the original cloud-init networking path used for first-boot SSH, clears saved NAT rules, and reboots the Pi so you can start again from Step 1 without reflashing.
+
+### 0.1 Create the reset script
+
+```bash
+sudo tee /usr/local/sbin/fpv-router-reset-for-retry >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+
+CONFIG_DIR=""
+BASHRC_FILE=""
+if [ -n "${TARGET_USER}" ] && [ "${TARGET_UID}" -ge 1 ] && [ -n "${USER_HOME}" ]; then
+  CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+  BASHRC_FILE="${USER_HOME}/.bashrc"
+fi
+
+disable_unit_if_present() {
+  local unit="$1"
+  if systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qxF "${unit}"; then
+    systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+  fi
+}
+
+disable_unit_if_present hostapd.service
+disable_unit_if_present dnsmasq.service
+disable_unit_if_present wifi-powersave-off.service
+disable_unit_if_present netfilter-persistent.service
+
+iptables -F >/dev/null 2>&1 || true
+iptables -t nat -F >/dev/null 2>&1 || true
+sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
+
+rm -f /etc/iptables/rules.v4
+rm -f /etc/iptables/rules.v6
+
+rm -f /etc/netplan/01-router.yaml
+rm -f /etc/systemd/network/11-fpv-ap.network
+rm -f /etc/systemd/network/10-fpv-wan.network
+rm -f /etc/systemd/system/wifi-powersave-off.service
+rm -f /etc/systemd/system/hostapd.service.d/override.conf
+rmdir /etc/systemd/system/hostapd.service.d 2>/dev/null || true
+rm -f /etc/hostapd/hostapd.conf
+rm -f /etc/default/hostapd
+rm -f /etc/dnsmasq.conf
+rm -f /etc/sysctl.d/99-router.conf
+rm -f /etc/sysctl.d/99-fpv.conf
+rm -f /etc/systemd/journald.conf.d/volatile.conf
+
+rm -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+if [ -f /etc/netplan/50-cloud-init.yaml.disabled ] && [ ! -f /etc/netplan/50-cloud-init.yaml ]; then
+  mv /etc/netplan/50-cloud-init.yaml.disabled /etc/netplan/50-cloud-init.yaml
+fi
+
+rm -f /usr/local/sbin/fpv-router-detect-ifaces
+rm -f /usr/local/sbin/render-fpv-router-config
+rm -f /usr/local/sbin/manage-uplink-wifis
+rm -f /usr/local/sbin/set-initial-uplink-wifi
+rm -f /usr/local/sbin/add-uplink-wifi
+rm -f /usr/local/sbin/fpv-router-reset-for-retry
+
+rm -f /etc/fpv-router/uplinks.conf
+rmdir /etc/fpv-router 2>/dev/null || true
+
+if [ -n "${CONFIG_DIR}" ]; then
+  rm -f "${CONFIG_DIR}/router.env"
+  rmdir "${CONFIG_DIR}" 2>/dev/null || true
+fi
+
+if [ -n "${BASHRC_FILE}" ] && [ -f "${BASHRC_FILE}" ]; then
+  LINE='source ~/.config/fpv-router/router.env 2>/dev/null || true'
+  TMP_FILE="$(mktemp)"
+  grep -vxF "${LINE}" "${BASHRC_FILE}" > "${TMP_FILE}" || true
+  install -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 644 "${TMP_FILE}" "${BASHRC_FILE}" 2>/dev/null || cat "${TMP_FILE}" > "${BASHRC_FILE}"
+  rm -f "${TMP_FILE}"
+fi
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+netplan generate >/dev/null 2>&1 || true
+
+echo
+echo "The Pi has been returned to the pre-router state used by this tutorial."
+echo "It will reboot now."
+echo
+sleep 2
+reboot
+EOF
+
+sudo chmod +x /usr/local/sbin/fpv-router-reset-for-retry
+```
+
+### 0.2 Run the reset script
+
+```bash
+sudo /usr/local/sbin/fpv-router-reset-for-retry
+```
+
+### 0.3 Reconnect after the reboot
+
+After the Pi reboots, reconnect the same way you did on first boot.
+
+If you ran Step 0 on an already-flashed microSD card, continue with Step 2 and use the Linux hostname, Linux username, Linux password, and initial upstream Wi-Fi that are already stored on that card.
+
+If you are working from a fresh flash, skip Step 0 and start with Step 1.
 
 ---
 
@@ -128,7 +250,7 @@ SSH into the Pi with the following command:
 
 The command above is an **EXAMPLE ONLY!**  If the Linux username were `router` and the Linux hostname were `gamboa`, those are the values that would replace the placeholders in the command above.  The command would then look like: 
 
-`ssh robot@gamboa.local`
+`ssh router@gamboa.local`
 
 If that does not work, scan your local network from the laptop:
 
@@ -138,7 +260,7 @@ sudo arp-scan --localnet
 
 Look for the Pi’s IP, then connect with:
 
-`<LINUX_USERNAME>@<PI_IP_ADDRESS>`
+`ssh <LINUX_USERNAME>@<PI_IP_ADDRESS>`
 
 Once in, everything else in this tutorial is done from your laptop over SSH.
 
@@ -314,25 +436,97 @@ You should see:
 
 This is how the router will remember multiple upstream networks later.
 
-### 6.1 Create the initial upstream Wi-Fi file
+### 6.1 Create the initial upstream Wi-Fi wizard
 
 ```bash
-sudo mkdir -p /etc/fpv-router
-sudo tee /etc/fpv-router/uplinks.conf >/dev/null <<'EOF'
-<UPSTREAM_WIFI_SSID>|<UPSTREAM_WIFI_PASSWORD>
+sudo tee /usr/local/sbin/set-initial-uplink-wifi >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
+SSID=""
+PASSWORD_1=""
+PASSWORD_2=""
+
+mkdir -p /etc/fpv-router
+
+if [ -s "${UPLINKS_FILE}" ]; then
+  echo
+  echo "The current remembered upstream Wi-Fi list is:"
+  awk -F'|' 'NF >= 1 && $1 !~ /^#/ && $1 != "" {print "  - " $1}' "${UPLINKS_FILE}"
+  echo
+  printf 'Overwrite that list with one initial upstream Wi-Fi entry? [y/N]: '
+  read -r OVERWRITE_REPLY
+  case "${OVERWRITE_REPLY:-N}" in
+    y|Y) ;;
+    *) echo "Initial uplink setup cancelled."; exit 0 ;;
+  esac
+fi
+
+while true; do
+  printf 'Enter the upstream Wi-Fi SSID: '
+  read -r SSID
+
+  if [ -z "${SSID}" ]; then
+    echo "SSID cannot be empty."
+    continue
+  fi
+
+  if [[ "${SSID}" == *"|"* ]]; then
+    echo "The '|' character cannot be used inside the SSID."
+    continue
+  fi
+
+  break
+done
+
+while true; do
+  read -rsp "Enter the upstream Wi-Fi password: " PASSWORD_1
+  echo
+  read -rsp "Re-enter the upstream Wi-Fi password: " PASSWORD_2
+  echo
+
+  if [ -z "${PASSWORD_1}" ]; then
+    echo "Password cannot be empty."
+    continue
+  fi
+
+  if [[ "${PASSWORD_1}" == *"|"* ]]; then
+    echo "The '|' character cannot be used inside the password."
+    continue
+  fi
+
+  if [ "${PASSWORD_1}" != "${PASSWORD_2}" ]; then
+    echo "The passwords did not match. Try again."
+    continue
+  fi
+
+  break
+done
+
+printf '%s|%s\n' "${SSID}" "${PASSWORD_1}" > "${UPLINKS_FILE}"
+chmod 600 "${UPLINKS_FILE}"
+
+echo
+echo "Saved initial upstream Wi-Fi: ${SSID}"
+echo "The remembered uplink list now contains exactly one entry."
 EOF
-sudo chmod 600 /etc/fpv-router/uplinks.conf
+
+sudo chmod +x /usr/local/sbin/set-initial-uplink-wifi
 ```
 
-Each line in this file is:
+### 6.2 Run the wizard
 
-```text
-SSID|PASSWORD
+```bash
+sudo /usr/local/sbin/set-initial-uplink-wifi
 ```
 
-Replace the placeholder line with the first upstream Wi-Fi the USB dongle should use.
-
-Use one SSID per line. Do not put the `|` character inside the SSID or password.
+The wizard writes the first remembered upstream Wi-Fi entry to `/etc/fpv-router/uplinks.conf` without asking you to hand-edit a command block.
 
 Example only: one remembered upstream Wi-Fi might be called WorkshopWiFi24, and another might be called FieldHotspot2G.
 
