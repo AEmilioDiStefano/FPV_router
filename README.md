@@ -314,14 +314,13 @@ You should see:
 
 This is how the router will remember multiple upstream networks later.
 
-### 6.1 Create the upstream Wi-Fi file
+### 6.1 Create the initial upstream Wi-Fi file
 
 ```bash
 sudo mkdir -p /etc/fpv-router
 sudo tee /etc/fpv-router/uplinks.conf >/dev/null <<'EOF'
 <UPSTREAM_WIFI_SSID>|<UPSTREAM_WIFI_PASSWORD>
 EOF
-
 sudo chmod 600 /etc/fpv-router/uplinks.conf
 ```
 
@@ -331,9 +330,13 @@ Each line in this file is:
 SSID|PASSWORD
 ```
 
-Use one SSID per line. Do not put the `|` character inside the SSID or password. Replace the placeholder line with the actual upstream Wi-Fi credentials you want the USB dongle to use first.
+Replace the placeholder line with the first upstream Wi-Fi the USB dongle should use.
+
+Use one SSID per line. Do not put the `|` character inside the SSID or password.
 
 Example only: one remembered upstream Wi-Fi might be called WorkshopWiFi24, and another might be called FieldHotspot2G.
+
+You will create a terminal wizard in Step 18 for adding, deleting, or updating remembered upstream Wi-Fi networks later without editing this file by hand.
 
 ---
 
@@ -840,14 +843,14 @@ What should now happen automatically:
 
 ---
 
-## 18. Easiest way to add a new upstream Wi-Fi later without forgetting old ones
+## 18. Create and reuse the uplink wizard later
 
 This is the “used in another location” workflow.
 
-### 18.1 Create the helper script once
+### 18.1 Create the uplink management wizard
 
 ```bash
-sudo tee /usr/local/sbin/add-uplink-wifi >/dev/null <<'EOF'
+sudo tee /usr/local/sbin/manage-uplink-wifis >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -856,47 +859,360 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: sudo add-uplink-wifi \"SSID\" \"PASSWORD\"" >&2
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+if [ -z "${TARGET_USER}" ] || [ "${TARGET_UID}" -eq 0 ]; then
+  echo "ERROR: Could not determine which regular Linux user owns the router environment file." >&2
   exit 1
 fi
 
-SSID="$1"
-PSK="$2"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+if [ -z "${USER_HOME}" ]; then
+  echo "ERROR: Could not determine the home directory for ${TARGET_USER}." >&2
+  exit 1
+fi
+
+CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+ENV_FILE="${CONFIG_DIR}/router.env"
 UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
-
-if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
-  echo "ERROR: '|' is reserved as the separator in ${UPLINKS_FILE}." >&2
-  exit 1
-fi
 
 mkdir -p /etc/fpv-router
 touch "${UPLINKS_FILE}"
 chmod 600 "${UPLINKS_FILE}"
 
-TMP_FILE="$(mktemp)"
-awk -F'|' -v ssid="${SSID}" -v psk="${PSK}" '
-BEGIN { updated=0 }
-$1 == ssid { if (!updated) { print ssid "|" psk; updated=1 } next }
-{ print }
-END { if (!updated) print ssid "|" psk }
-' "${UPLINKS_FILE}" > "${TMP_FILE}"
+WAN_IF=""
+if [ -f "${ENV_FILE}" ]; then
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+fi
 
-install -m 600 "${TMP_FILE}" "${UPLINKS_FILE}"
-rm -f "${TMP_FILE}"
+declare -a SSID_ORDER=()
+declare -A PASSWORD_BY_SSID=()
+declare -a DETECTED_SSIDS=()
+SELECTED_SSID=""
+ENTERED_PASSWORD=""
+CHANGES_MADE="0"
 
-/usr/local/sbin/render-fpv-router-config
-netplan generate
-netplan apply
-systemctl restart systemd-networkd
+remember_network() {
+  local ssid="$1"
+  local password="$2"
+  local i
 
-echo
-echo "Saved uplink Wi-Fi: ${SSID}"
-echo "Existing uplinks were preserved."
-echo
+  for i in "${!SSID_ORDER[@]}"; do
+    if [ "${SSID_ORDER[$i]}" = "${ssid}" ]; then
+      PASSWORD_BY_SSID["${ssid}"]="${password}"
+      return 0
+    fi
+  done
+
+  SSID_ORDER+=("${ssid}")
+  PASSWORD_BY_SSID["${ssid}"]="${password}"
+}
+
+load_uplinks() {
+  SSID_ORDER=()
+  PASSWORD_BY_SSID=()
+
+  while IFS='|' read -r SSID PSK; do
+    SSID="${SSID%$'\r'}"
+    PSK="${PSK%$'\r'}"
+    [ -z "${SSID}" ] && continue
+    case "${SSID}" in \#*) continue ;; esac
+    remember_network "${SSID}" "${PSK}"
+  done < "${UPLINKS_FILE}"
+}
+
+save_uplinks() {
+  local tmp_file
+  local ssid
+
+  tmp_file="$(mktemp)"
+  for ssid in "${SSID_ORDER[@]}"; do
+    printf '%s|%s\n' "${ssid}" "${PASSWORD_BY_SSID[$ssid]}" >> "${tmp_file}"
+  done
+
+  install -m 600 "${tmp_file}" "${UPLINKS_FILE}"
+  rm -f "${tmp_file}"
+}
+
+print_remembered() {
+  local i
+
+  echo
+  echo "Remembered upstream Wi-Fi networks:"
+  if [ "${#SSID_ORDER[@]}" -eq 0 ]; then
+    echo "  (none saved yet)"
+  else
+    for i in "${!SSID_ORDER[@]}"; do
+      printf '  %d. %s\n' "$((i + 1))" "${SSID_ORDER[$i]}"
+    done
+  fi
+  echo
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default="${2:-N}"
+  local reply=""
+
+  while true; do
+    if [ "${default}" = "Y" ]; then
+      printf '%s [Y/n]: ' "${prompt}"
+    else
+      printf '%s [y/N]: ' "${prompt}"
+    fi
+
+    read -r reply
+    reply="${reply:-${default}}"
+
+    case "${reply}" in
+      y|Y) return 0 ;;
+      n|N) return 1 ;;
+      *) echo "Please enter y or n." ;;
+    esac
+  done
+}
+
+prompt_for_password() {
+  local password_1=""
+  local password_2=""
+
+  while true; do
+    read -rsp "Enter the Wi-Fi password: " password_1
+    echo
+    read -rsp "Re-enter the Wi-Fi password: " password_2
+    echo
+
+    if [ -z "${password_1}" ]; then
+      echo "Password cannot be empty."
+      continue
+    fi
+
+    if [ "${password_1}" != "${password_2}" ]; then
+      echo "The passwords did not match. Try again."
+      continue
+    fi
+
+    ENTERED_PASSWORD="${password_1}"
+    return 0
+  done
+}
+
+scan_detected_wifis() {
+  DETECTED_SSIDS=()
+
+  if [ -z "${WAN_IF:-}" ]; then
+    return 0
+  fi
+
+  rfkill unblock all >/dev/null 2>&1 || true
+  ip link set dev "${WAN_IF}" up >/dev/null 2>&1 || true
+
+  mapfile -t DETECTED_SSIDS < <(
+    iw dev "${WAN_IF}" scan ap-force 2>/dev/null \
+      | awk -F'SSID: ' '/SSID: / {print $2}' \
+      | sed -e 's/\r$//' -e '/^$/d' \
+      | awk '!seen[$0]++'
+  )
+}
+
+choose_existing_ssid() {
+  local action_label="$1"
+  local selection=""
+  local index=""
+  local ssid=""
+  SELECTED_SSID=""
+
+  if [ "${#SSID_ORDER[@]}" -eq 0 ]; then
+    echo "No remembered upstream Wi-Fi networks are currently saved."
+    return 1
+  fi
+
+  print_remembered
+
+  while true; do
+    printf 'Enter the number or exact SSID to %s: ' "${action_label}"
+    read -r selection
+
+    if [ -z "${selection}" ]; then
+      echo "Selection cannot be empty."
+      continue
+    fi
+
+    if [[ "${selection}" =~ ^[0-9]+$ ]]; then
+      index=$((selection - 1))
+      if [ "${index}" -ge 0 ] && [ "${index}" -lt "${#SSID_ORDER[@]}" ]; then
+        SELECTED_SSID="${SSID_ORDER[$index]}"
+        return 0
+      fi
+      echo "That number is not in the remembered list."
+      continue
+    fi
+
+    for ssid in "${SSID_ORDER[@]}"; do
+      if [ "${ssid}" = "${selection}" ]; then
+        SELECTED_SSID="${ssid}"
+        return 0
+      fi
+    done
+
+    echo "That SSID is not in the remembered list."
+  done
+}
+
+choose_ssid_to_add() {
+  local selection=""
+  local index=""
+  SELECTED_SSID=""
+
+  scan_detected_wifis
+
+  echo
+  if [ "${#DETECTED_SSIDS[@]}" -gt 0 ]; then
+    echo "Detected upstream Wi-Fi networks:"
+    for index in "${!DETECTED_SSIDS[@]}"; do
+      printf '  %d. %s\n' "$((index + 1))" "${DETECTED_SSIDS[$index]}"
+    done
+  else
+    echo "No nearby upstream Wi-Fi networks were detected right now."
+  fi
+
+  echo "You can enter a number from the detected list or type an SSID manually."
+
+  while true; do
+    printf 'Enter the Wi-Fi SSID you want to remember: '
+    read -r selection
+
+    if [ -z "${selection}" ]; then
+      echo "SSID cannot be empty."
+      continue
+    fi
+
+    if [[ "${selection}" =~ ^[0-9]+$ ]]; then
+      index=$((selection - 1))
+      if [ "${index}" -ge 0 ] && [ "${index}" -lt "${#DETECTED_SSIDS[@]}" ]; then
+        SELECTED_SSID="${DETECTED_SSIDS[$index]}"
+        return 0
+      fi
+      echo "That number is not in the detected list."
+      continue
+    fi
+
+    SELECTED_SSID="${selection}"
+    return 0
+  done
+}
+
+add_network() {
+  choose_ssid_to_add || return 0
+  prompt_for_password
+
+  local ssid="${SELECTED_SSID}"
+  local password="${ENTERED_PASSWORD}"
+
+  if [ -n "${PASSWORD_BY_SSID[$ssid]:-}" ]; then
+    echo "That SSID is already remembered. Updating the saved password."
+  else
+    echo "Adding a new remembered upstream Wi-Fi."
+  fi
+
+  remember_network "${ssid}" "${password}"
+  save_uplinks
+  CHANGES_MADE="1"
+  print_remembered
+}
+
+modify_network() {
+  choose_existing_ssid "modify" || return 0
+  prompt_for_password
+
+  local ssid="${SELECTED_SSID}"
+  local password="${ENTERED_PASSWORD}"
+
+  PASSWORD_BY_SSID["${ssid}"]="${password}"
+  save_uplinks
+  CHANGES_MADE="1"
+
+  echo "Updated the saved password for: ${ssid}"
+  print_remembered
+}
+
+delete_network() {
+  local new_order=()
+  local item=""
+
+  choose_existing_ssid "delete" || return 0
+  local ssid="${SELECTED_SSID}"
+
+  if ! prompt_yes_no "Delete remembered Wi-Fi '${ssid}'?" "N"; then
+    echo "Delete cancelled."
+    return 0
+  fi
+
+  for item in "${SSID_ORDER[@]}"; do
+    if [ "${item}" != "${ssid}" ]; then
+      new_order+=("${item}")
+    fi
+  done
+
+  SSID_ORDER=("${new_order[@]}")
+  unset "PASSWORD_BY_SSID[$ssid]"
+  save_uplinks
+  CHANGES_MADE="1"
+
+  echo "Deleted remembered Wi-Fi: ${ssid}"
+  print_remembered
+}
+
+apply_changes_if_possible() {
+  if [ "${CHANGES_MADE}" != "1" ]; then
+    echo "No changes were made."
+    return 0
+  fi
+
+  echo
+  if [ -x /usr/local/sbin/render-fpv-router-config ]; then
+    echo "Re-rendering and applying the updated uplink list..."
+    /usr/local/sbin/render-fpv-router-config
+    netplan generate
+    netplan apply
+    systemctl restart systemd-networkd
+    echo "Updated uplink list saved and applied."
+  else
+    echo "Updated uplink list saved to ${UPLINKS_FILE}."
+    echo "The router config renderer is not installed yet, so these saved networks will be used later in the guide."
+  fi
+}
+
+load_uplinks
+print_remembered
+
+if prompt_yes_no "Would you like to add a new remembered upstream Wi-Fi now?" "N"; then
+  add_network
+fi
+
+while true; do
+  echo "Choose the next action:"
+  echo "  1) Add a remembered Wi-Fi"
+  echo "  2) Modify the password for a remembered Wi-Fi"
+  echo "  3) Delete a remembered Wi-Fi"
+  echo "  4) Finish"
+  printf 'Selection: '
+  read -r selection
+
+  case "${selection}" in
+    1|a|A) add_network ;;
+    2|m|M) modify_network ;;
+    3|d|D) delete_network ;;
+    4|q|Q|'') break ;;
+    *) echo "Enter 1, 2, 3, or 4." ;;
+  esac
+done
+
+apply_changes_if_possible
 EOF
 
-sudo chmod +x /usr/local/sbin/add-uplink-wifi
+sudo chmod +x /usr/local/sbin/manage-uplink-wifis
 ```
 
 ### 18.2 Use it later
@@ -910,15 +1226,22 @@ ssh <LINUX_USERNAME>@10.42.0.1
 Then run:
 
 ```bash
-sudo add-uplink-wifi "<NEW_UPSTREAM_WIFI_SSID>" "<NEW_UPSTREAM_WIFI_PASSWORD>"
+sudo /usr/local/sbin/manage-uplink-wifis
 ```
 
-This:
-- remembers the new network
-- keeps the old ones
-- updates the password if that SSID already exists
-- regenerates the router config
-- reapplies the WAN side
+The wizard will:
+- print the names of all remembered upstream Wi-Fi networks
+- ask whether you want to add a new one
+- show a detected Wi-Fi list when adding, while still allowing manual SSID entry
+- add a new upstream Wi-Fi
+- modify the password for a remembered upstream Wi-Fi
+- delete a remembered upstream Wi-Fi
+- automatically re-render and reapply the WAN-side config when you finish
+
+Example only: one remembered upstream Wi-Fi might be called WorkshopWiFi24, and another might be called FieldHotspot2G.
+
+The wizard stores the remembered upstream networks in `/etc/fpv-router/uplinks.conf`.
+It prints SSID names, but it does not print saved passwords.
 
 ### 18.3 Verify afterwards
 
