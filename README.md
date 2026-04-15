@@ -57,21 +57,21 @@ Use the **official Raspberry Pi Imager**.
 
 When prompted, choose **Edit Settings**.
 
-Set the following.
+Set your **Linux hostname** and **Linux Password**.
 
-#### General tab
+#### Example:
 
 Set:
 - **hostname**: `gamboa`
 - **username**: `router`
-- **password**: choose your own
+- **password**: `secure_password_DO_NOT_USE_THIS_ONE!`
 
 Under **Configure Wireless LAN**, set the **initial upstream Wi-Fi** you want the Pi to use on first boot.
 
 This is your internet source for setup, such as home or office Wi-Fi.
 
 Example:
-- SSID: `IZZI-E81F`
+- SSID: `NAME_OF_YOUR_WIFI`
 - Password: `YOUR_REAL_WIFI_PASSWORD`
 
 #### Services tab
