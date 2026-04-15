@@ -341,7 +341,10 @@ sudo /usr/local/sbin/fpv-router-reset-for-retry
 
 If the script prints `No reset is needed.`, stay in the same SSH session and continue directly to Step 4.
 
-If it says a reset is needed and then your SSH session disconnects, wait for the Pi to reboot, SSH back in the same way you did in Step 2, and then run Step 3.3.
+### If it says a reset is needed and then your SSH session disconnects, wait for the Pi to reboot, SSH back in the same way you did in Step 2, and then run Step 3.3.
+
+### NOTE: Rebooting may take some time here, so wait 30-120 seconds to SSH back into your Pi. 
+
 
 ### 3.3 Check that reset worked properly
 
@@ -467,6 +470,8 @@ sudo systemctl stop dnsmasq || true
 ---
 
 ## 5. Automatically detect interface names and create persistent variables
+
+### This is where we set the SSID and password for the NEW network that we will be broadcasting from the Pi router.
 
 This step lets the rest of the tutorial use the same commands on different Pis and different USB dongles.
 
@@ -1058,45 +1063,13 @@ sudo netplan generate
 sudo netplan apply
 ```
 
-### 9.2 Restart networkd
+### NOW CLOSE THE TERMINAL, OPEN A NEW TERMINAL, AND SSH BACK INTO YOUR PI
 
-```bash
-sudo systemctl restart systemd-networkd
-```
+The network path usually changes here, so the SSH session you were using may stop responding. That is normal.
 
-### 9.3 Expect SSH to drop here
+SSH back into the Pi the same way that works on your network, then continue below.
 
-If you are connected over SSH, your session may disconnect now.
-
-That is normal.
-
-### Why SSH drops here
-
-Before this point, the Pi may have been using the internal Wi-Fi path it got during first boot.  
-Now you are changing the roles so that:
-
-- `$WAN_IF` becomes the true upstream internet interface
-- `$AP_IF` stops being a client and becomes the AP-side interface
-
-That transition can interrupt your SSH session.
-
-### 9.4 Reconnect
-
-Use `arp-scan` from the laptop if needed:
-
-```bash
-sudo arp-scan --localnet
-```
-
-Then reconnect:
-
-```bash
-[ -n "${PI_USER:-}" ] || read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
-read -rp "Enter the current WAN IP of the Pi: " PI_WAN_IP
-ssh "${PI_USER}@${PI_WAN_IP}"
-```
-
-After reconnecting, reload the environment:
+### Then source `.bashrc`
 
 ```bash
 source ~/.bashrc
@@ -1137,7 +1110,9 @@ Run:
 sudo reboot
 ```
 
-Reconnect again over SSH the same way you did in Step 9.4, then run:
+### SSH BACK INTO YOUR PI!
+
+Then run:  
 
 ```bash
 source ~/.bashrc
