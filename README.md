@@ -138,9 +138,7 @@ sudo arp-scan --localnet
 
 Look for the Pi’s IP, then connect with:
 
-```bash
-ssh <LINUX_USERNAME>@<PI_IP_ADDRESS>
-```
+`<LINUX_USERNAME>@<PI_IP_ADDRESS>`
 
 Once in, everything else in this tutorial is done from your laptop over SSH.
 
