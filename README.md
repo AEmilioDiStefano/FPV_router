@@ -1,5 +1,5 @@
 # Ubuntu Server 24.04 FPV Router / Repeater on Raspberry Pi 4
-## Full SSH-only build guide with automatic interface detection and remembered upstream Wi-Fis
+## Full SSH-only build guide with automatic interface detection and remembered upstream Wi-Fi networks
 
 ![host-and-port](media/FPV-router.png)
 
@@ -7,20 +7,24 @@
 
 This guide gets you from:
 
-**“Raspberry Pi 4 + blank microSD card”**  
+**“Raspberry Pi 4 + blank microSD card + WiFi Dongle”**  
 to  
-**“Working Ubuntu-based FPV router/repeater that automatically brings up a robot network named `Rodriguez` and shares internet from an upstream Wi-Fi through a USB Wi-Fi dongle.”**
+**“Working Ubuntu-based FPV router/repeater that automatically brings up a robot network and shares internet from an upstream Wi-Fi through a USB Wi-Fi dongle.”**
 
-This version is designed to avoid the failure points from earlier attempts:
+This setup process avoids common failure types such as:
 
-- cloud-init continuing to manage `wlan0`
+- cloud-init continuing to manage the AP-side interface
 - the wrong interface winning the default route
-- `hostapd` starting while `wlan0` is still being treated like a client
+- `hostapd` starting while the Pi's internal Wi-Fi is still being treated like a client
 - DHCP working but NAT missing
 - hand-editing interface names everywhere
-- forgetting old upstream Wi-Fis when adding a new one later
+- overwriting older upstream Wi-Fi credentials when adding a new one later
 
-It is also written so the user can do the setup **entirely over SSH from a laptop**, without plugging the Pi into a monitor.
+Everything below is written so the user can do the setup **entirely over SSH from a laptop**, without plugging the Pi into a monitor.
+
+Additional repo docs:
+
+- [Git Workflow](DOCS/git_workflow.md)
 
 ---
 
@@ -30,7 +34,7 @@ You need:
 
 - **1 Raspberry Pi 4**
 - **1 microSD card** (32 GB or larger recommended)
-- **1 USB Wi-Fi dongle**
+- **1 USB Wi-Fi dongle** with stable Linux support
 - **1 Raspberry Pi power supply**
 - **1 laptop** that can connect over SSH
 - Optional but recommended:
@@ -78,6 +82,8 @@ Enable:
 
 Flash the card.
 
+The first boot can take several minutes while Ubuntu expands the filesystem and finishes cloud-init, so give it a little time before scanning for it.
+
 ---
 
 ## 2. Before the first SSH connection, make sure the setup conditions are correct
@@ -92,9 +98,11 @@ This matters.
 
 ### 2.4 Make sure your laptop and the Pi are on the same network
 
-For the first SSH session, the Pi will use the Wi-Fi you configured in Raspberry Pi Imager.
+For the first SSH session, the Pi will use the Wi-Fi you configured in Raspberry Pi Imager, usually through the Pi's built-in Wi-Fi.
 
 Your **laptop must be on that same network**.
+
+The USB Wi-Fi dongle is switched into the permanent upstream WAN role later in this guide.
 
 ### 2.5 Prefer a 2.4 GHz setup network during initial setup
 
@@ -106,7 +114,7 @@ For initial setup, make sure:
 
 If your router uses the same SSID for both 2.4 GHz and 5 GHz, create or choose a **dedicated 2.4 GHz SSID** for setup if possible.
 
-This avoids avoidable SSH discovery problems.
+This avoids common SSH discovery problems.
 
 ---
 
@@ -148,10 +156,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y \
   netfilter-persistent \
   iw \
   rfkill \
-  ethtool \
-  arp-scan \
+  wpasupplicant \
   avahi-daemon
 ```
+
+`wpasupplicant` is included explicitly because Ubuntu's `networkd` Wi-Fi client path depends on it.
 
 Stop the router services while configuring:
 
@@ -173,11 +182,24 @@ sudo tee /usr/local/sbin/fpv-router-detect-ifaces >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+ROUTER_HOME="$(getent passwd router | cut -d: -f6)"
+if [ -z "${ROUTER_HOME}" ]; then
+  echo "ERROR: user 'router' not found. Set the username to 'router' in Raspberry Pi Imager first." >&2
+  exit 1
+fi
+
+ENV_FILE="${ROUTER_HOME}/fpv-router.env"
+
 mapfile -t WIFI_IFACES < <(iw dev | awk '$1=="Interface"{print $2}')
 
 if [ "${#WIFI_IFACES[@]}" -lt 2 ]; then
-  echo "ERROR: Need two Wi-Fi interfaces (internal + USB dongle)." >&2
-  echo "Make sure the USB Wi-Fi dongle is plugged in." >&2
+  echo "ERROR: Need two Wi-Fi interfaces (internal Pi radio + USB Wi-Fi dongle)." >&2
+  echo "Make sure the USB Wi-Fi dongle is plugged in before running this script." >&2
   exit 1
 fi
 
@@ -206,11 +228,13 @@ for IFACE in "${WIFI_IFACES[@]}"; do
 done
 
 if [ -z "$AP_IF" ]; then
-  echo "ERROR: Could not identify the AP interface." >&2
+  echo "ERROR: Could not identify the AP-side Wi-Fi interface." >&2
   exit 1
 fi
 
-cat >/root/fpv-router.env <<ENV
+install -o router -g router -m 600 /dev/null "${ENV_FILE}"
+
+cat >"${ENV_FILE}" <<ENV
 export WAN_IF="${WAN_IF}"
 export AP_IF="${AP_IF}"
 export LAN_IP="10.42.0.1"
@@ -223,10 +247,11 @@ export AP_PSK="ChangeThisPasswordNow"
 export WIFI_COUNTRY="US"
 ENV
 
-chmod 600 /root/fpv-router.env
+chown router:router "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
 
 echo
-echo "Wrote /root/fpv-router.env with:"
+echo "Wrote ${ENV_FILE} with:"
 echo "  WAN_IF=${WAN_IF}"
 echo "  AP_IF=${AP_IF}"
 echo
@@ -239,19 +264,21 @@ sudo chmod +x /usr/local/sbin/fpv-router-detect-ifaces
 
 ```bash
 sudo /usr/local/sbin/fpv-router-detect-ifaces
-source /root/fpv-router.env
+source ~/fpv-router.env
 ```
 
 ### 5.3 Load the variables automatically in future shells
 
 ```bash
-grep -qxF 'source /root/fpv-router.env 2>/dev/null || true' ~/.bashrc || \
-echo 'source /root/fpv-router.env 2>/dev/null || true' >> ~/.bashrc
+grep -qxF 'source ~/fpv-router.env 2>/dev/null || true' ~/.bashrc || \
+echo 'source ~/fpv-router.env 2>/dev/null || true' >> ~/.bashrc
 
 source ~/.bashrc
 ```
 
 ### 5.4 Verify what was detected
+
+If you want a different AP name or password, edit `~/fpv-router.env` now and then run `source ~/.bashrc` again. `AP_PSK` must be between 8 and 63 characters.
 
 ```bash
 echo "WAN_IF=$WAN_IF"
@@ -286,6 +313,8 @@ Each line in this file is:
 SSID|PASSWORD
 ```
 
+Use one SSID per line. Do not put the `|` character inside the SSID or password. The first line should match the upstream Wi-Fi you used for the Pi's first boot.
+
 ---
 
 ## 7. Create the configuration renderer
@@ -299,23 +328,70 @@ sudo tee /usr/local/sbin/render-fpv-router-config >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /root/fpv-router.env
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+ROUTER_HOME="$(getent passwd router | cut -d: -f6)"
+if [ -z "${ROUTER_HOME}" ]; then
+  echo "ERROR: user 'router' not found." >&2
+  exit 1
+fi
+
+ENV_FILE="${ROUTER_HOME}/fpv-router.env"
+
+if [ ! -f "${ENV_FILE}" ]; then
+  echo "ERROR: ${ENV_FILE} not found. Run fpv-router-detect-ifaces first." >&2
+  exit 1
+fi
+
+source "${ENV_FILE}"
 
 if [ ! -f /root/uplinks.conf ]; then
   echo "ERROR: /root/uplinks.conf not found." >&2
   exit 1
 fi
 
-ACCESS_POINTS_BLOCK="$(
+yaml_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "${value}"
+}
+
+ACCESS_POINTS_BLOCK=""
+declare -A SEEN_SSIDS=()
+
 while IFS='|' read -r SSID PSK; do
+  SSID="${SSID%$'\r'}"
+  PSK="${PSK%$'\r'}"
   [ -z "${SSID}" ] && continue
   case "$SSID" in \#*) continue ;; esac
-  printf '        "%s":\n          password: "%s"\n' "$SSID" "$PSK"
+  if [ -z "${PSK}" ]; then
+    echo "ERROR: Missing password for SSID '${SSID}' in /root/uplinks.conf." >&2
+    exit 1
+  fi
+  if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
+    echo "ERROR: '|' is reserved as the SSID/password separator in /root/uplinks.conf." >&2
+    exit 1
+  fi
+  if [ -n "${SEEN_SSIDS[$SSID]:-}" ]; then
+    echo "ERROR: Duplicate SSID '${SSID}' in /root/uplinks.conf." >&2
+    exit 1
+  fi
+  SEEN_SSIDS["$SSID"]=1
+  ACCESS_POINTS_BLOCK+="        \"$(yaml_escape "${SSID}")\":\n"
+  ACCESS_POINTS_BLOCK+="          password: \"$(yaml_escape "${PSK}")\"\n"
 done < /root/uplinks.conf
-)"
 
-sudo mkdir -p /etc/netplan
-cat <<EOF_NETPLAN | sudo tee /etc/netplan/01-router.yaml >/dev/null
+if [ -z "${ACCESS_POINTS_BLOCK}" ]; then
+  echo "ERROR: No upstream Wi-Fi networks were found in /root/uplinks.conf." >&2
+  exit 1
+fi
+
+mkdir -p /etc/netplan
+cat > /etc/netplan/01-router.yaml <<EOF_NETPLAN
 network:
   version: 2
   renderer: networkd
@@ -323,34 +399,31 @@ network:
   wifis:
     ${WAN_IF}:
       dhcp4: true
+      dhcp4-overrides:
+        route-metric: 100
       optional: true
       access-points:
-${ACCESS_POINTS_BLOCK}
-  ethernets:
-    ${AP_IF}:
-      dhcp4: false
-      addresses:
-        - ${LAN_CIDR}
-      optional: true
+$(printf '%b' "${ACCESS_POINTS_BLOCK}")
 EOF_NETPLAN
 
-sudo chown root:root /etc/netplan/01-router.yaml
-sudo chmod 600 /etc/netplan/01-router.yaml
+chown root:root /etc/netplan/01-router.yaml
+chmod 600 /etc/netplan/01-router.yaml
 
-sudo mkdir -p /etc/systemd/network
-cat <<EOF_WAN | sudo tee /etc/systemd/network/10-fpv-wan.network >/dev/null
+mkdir -p /etc/systemd/network
+rm -f /etc/systemd/network/10-fpv-wan.network
+cat > /etc/systemd/network/11-fpv-ap.network <<EOF_AP_NETWORK
 [Match]
-Name=${WAN_IF}
+Name=${AP_IF}
 
 [Network]
-DHCP=yes
+Address=${LAN_CIDR}
+ConfigureWithoutCarrier=yes
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+EOF_AP_NETWORK
 
-[DHCPv4]
-RouteMetric=100
-EOF_WAN
-
-sudo mkdir -p /etc/hostapd
-cat <<EOF_HOSTAPD | sudo tee /etc/hostapd/hostapd.conf >/dev/null
+mkdir -p /etc/hostapd
+cat > /etc/hostapd/hostapd.conf <<EOF_HOSTAPD
 interface=${AP_IF}
 driver=nl80211
 
@@ -372,22 +445,25 @@ country_code=${WIFI_COUNTRY}
 ieee80211d=1
 EOF_HOSTAPD
 
-cat <<EOF_DEFAULT_HOSTAPD | sudo tee /etc/default/hostapd >/dev/null
+cat > /etc/default/hostapd <<EOF_DEFAULT_HOSTAPD
 DAEMON_CONF="/etc/hostapd/hostapd.conf"
 DAEMON_OPTS=""
 EOF_DEFAULT_HOSTAPD
 
-sudo mkdir -p /etc/systemd/system/hostapd.service.d
-cat <<EOF_HOSTAPD_OVERRIDE | sudo tee /etc/systemd/system/hostapd.service.d/override.conf >/dev/null
+mkdir -p /etc/systemd/system/hostapd.service.d
+cat > /etc/systemd/system/hostapd.service.d/override.conf <<EOF_HOSTAPD_OVERRIDE
 [Service]
 ExecStartPre=
 ExecStartPre=/usr/sbin/rfkill unblock all
+ExecStartPre=/bin/sh -c '/usr/sbin/ip link set dev ${AP_IF} down || true'
 ExecStartPre=/bin/sh -c '/usr/sbin/iw dev ${AP_IF} set type __ap || true'
+ExecStartPre=/bin/sh -c '/usr/sbin/ip link set dev ${AP_IF} up || true'
 EOF_HOSTAPD_OVERRIDE
 
-cat <<EOF_DNSMASQ | sudo tee /etc/dnsmasq.conf >/dev/null
+cat > /etc/dnsmasq.conf <<EOF_DNSMASQ
 interface=${AP_IF}
 bind-interfaces
+listen-address=${LAN_IP}
 port=0
 
 dhcp-range=${DHCP_START},${DHCP_END},255.255.255.0,12h
@@ -395,11 +471,11 @@ dhcp-option=option:router,${LAN_IP}
 dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
 EOF_DNSMASQ
 
-cat <<'EOF_ROUTER_SYSCTL' | sudo tee /etc/sysctl.d/99-router.conf >/dev/null
+cat > /etc/sysctl.d/99-router.conf <<'EOF_ROUTER_SYSCTL'
 net.ipv4.ip_forward=1
 EOF_ROUTER_SYSCTL
 
-cat <<'EOF_FPV_SYSCTL' | sudo tee /etc/sysctl.d/99-fpv.conf >/dev/null
+cat > /etc/sysctl.d/99-fpv.conf <<'EOF_FPV_SYSCTL'
 net.core.rmem_max=26214400
 net.core.wmem_max=26214400
 net.ipv4.udp_rmem_min=16384
@@ -407,14 +483,14 @@ net.ipv4.udp_wmem_min=16384
 net.ipv4.tcp_low_latency=1
 EOF_FPV_SYSCTL
 
-sudo mkdir -p /etc/systemd/journald.conf.d
-cat <<'EOF_JOURNAL' | sudo tee /etc/systemd/journald.conf.d/volatile.conf >/dev/null
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/volatile.conf <<'EOF_JOURNAL'
 [Journal]
 Storage=volatile
 RuntimeMaxUse=64M
 EOF_JOURNAL
 
-cat <<EOF_WIFI_PS | sudo tee /etc/systemd/system/wifi-powersave-off.service >/dev/null
+cat > /etc/systemd/system/wifi-powersave-off.service <<EOF_WIFI_PS
 [Unit]
 Description=Disable WiFi power saving
 After=network-online.target
@@ -422,8 +498,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/iw dev ${AP_IF} set power_save off
-ExecStart=/usr/sbin/iw dev ${WAN_IF} set power_save off
+ExecStart=/bin/sh -c '/usr/sbin/iw dev ${AP_IF} set power_save off || true'
+ExecStart=/bin/sh -c '/usr/sbin/iw dev ${WAN_IF} set power_save off || true'
 RemainAfterExit=yes
 
 [Install]
@@ -530,6 +606,7 @@ Run:
 
 ```bash
 ip route
+ip addr show "$AP_IF"
 ```
 
 You want to see:
@@ -538,13 +615,13 @@ You want to see:
 default via 192.168.x.1 dev <YOUR_WAN_IF> metric 100
 ```
 
-And also:
+And on `ip addr show "$AP_IF"` you want to see:
 
 ```text
-10.42.0.0/24 dev <YOUR_AP_IF>
+inet 10.42.0.1/24
 ```
 
-If the default route is not through `$WAN_IF`, stop here and fix that before continuing.
+If the default route is not through `$WAN_IF`, or if `$AP_IF` does not have `10.42.0.1/24`, stop here and fix that before continuing.
 
 ---
 
@@ -581,18 +658,16 @@ sudo systemctl restart systemd-journald
 Unmask and enable router services:
 
 ```bash
-sudo systemctl unmask hostapd
-sudo systemctl enable hostapd
-sudo systemctl enable dnsmasq
 sudo systemctl daemon-reload
-sudo systemctl enable wifi-powersave-off
+sudo systemctl unmask hostapd
+sudo systemctl enable hostapd dnsmasq wifi-powersave-off
 ```
 
 ---
 
 ## 13. Set up NAT and forwarding
 
-### 13.1 Flush stale rules from previous attempts
+### 13.1 Clear any stale rules
 
 ```bash
 sudo iptables -F
@@ -604,7 +679,7 @@ sudo iptables -t nat -F
 ```bash
 sudo iptables -t nat -A POSTROUTING -o "$WAN_IF" -j MASQUERADE
 sudo iptables -A FORWARD -i "$AP_IF" -o "$WAN_IF" -j ACCEPT
-sudo iptables -A FORWARD -i "$WAN_IF" -o "$AP_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i "$WAN_IF" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 ```
 
 ### 13.3 Save them persistently
@@ -640,8 +715,8 @@ sudo systemctl restart wifi-powersave-off
 Now verify both:
 
 ```bash
-systemctl status dnsmasq --no-pager
-systemctl status hostapd --no-pager
+sudo systemctl status dnsmasq --no-pager
+sudo systemctl status hostapd --no-pager
 ```
 
 Both should be **active (running)**.
@@ -657,7 +732,7 @@ iw dev "$AP_IF" info
 ```
 
 At this point you want to see:
-- `ssid Rodriguez`
+- `ssid <your AP_SSID value>`
 - `type AP`
 
 If you see `type managed`, do not continue. That means something is still trying to use the AP interface as a client.
@@ -670,15 +745,15 @@ With the tutorial above, it should be `type AP`.
 
 Connect your laptop, phone, or robot to:
 
-- **SSID**: `Rodriguez`
-- **Password**: the value stored in `AP_PSK` inside `/root/fpv-router.env`
+- **SSID**: the value stored in `AP_SSID` inside `~/fpv-router.env` (default: `Rodriguez`)
+- **Password**: the value stored in `AP_PSK` inside `~/fpv-router.env`
 
 ### 16.1 Verify DHCP on the Pi
 
 Run:
 
 ```bash
-journalctl -u dnsmasq -n 50 --no-pager
+sudo journalctl -u dnsmasq -n 50 --no-pager
 ```
 
 Look for `DHCPACK(...)` lines.
@@ -720,7 +795,7 @@ What should now happen automatically:
 
 - the Pi boots
 - the USB dongle reconnects to any remembered upstream Wi-Fi that is available
-- the AP `Rodriguez` appears
+- the AP appears with the SSID from `AP_SSID` (default: `Rodriguez`)
 - clients connect and get `10.42.0.x`
 - clients get internet through the upstream Wi-Fi
 - no monitor is needed
@@ -738,6 +813,11 @@ sudo tee /usr/local/sbin/add-uplink-wifi >/dev/null <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
 if [ "$#" -ne 2 ]; then
   echo "Usage: sudo add-uplink-wifi \"SSID\" \"PASSWORD\"" >&2
   exit 1
@@ -746,12 +826,24 @@ fi
 SSID="$1"
 PSK="$2"
 
+if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
+  echo "ERROR: '|' is reserved as the separator in /root/uplinks.conf." >&2
+  exit 1
+fi
+
 touch /root/uplinks.conf
 chmod 600 /root/uplinks.conf
 
-if ! grep -Fqx "${SSID}|${PSK}" /root/uplinks.conf; then
-  printf '%s|%s\n' "$SSID" "$PSK" >> /root/uplinks.conf
-fi
+TMP_FILE="$(mktemp)"
+awk -F'|' -v ssid="${SSID}" -v psk="${PSK}" '
+BEGIN { updated=0 }
+$1 == ssid { if (!updated) { print ssid "|" psk; updated=1 } next }
+{ print }
+END { if (!updated) print ssid "|" psk }
+' /root/uplinks.conf > "${TMP_FILE}"
+
+install -m 600 "${TMP_FILE}" /root/uplinks.conf
+rm -f "${TMP_FILE}"
 
 /usr/local/sbin/render-fpv-router-config
 netplan generate
@@ -759,8 +851,8 @@ netplan apply
 systemctl restart systemd-networkd
 
 echo
-echo "Added uplink Wi-Fi: ${SSID}"
-echo "Previous uplinks were preserved."
+echo "Saved uplink Wi-Fi: ${SSID}"
+echo "Existing uplinks were preserved."
 echo
 EOF
 
@@ -769,7 +861,7 @@ sudo chmod +x /usr/local/sbin/add-uplink-wifi
 
 ### 18.2 Use it later
 
-Connect to the router over `Rodriguez`:
+Connect to the router through the AP network:
 
 ```bash
 ssh router@10.42.0.1
@@ -784,6 +876,7 @@ sudo add-uplink-wifi "NewNetworkName" "NewNetworkPassword"
 This:
 - remembers the new network
 - keeps the old ones
+- updates the password if that SSID already exists
 - regenerates the router config
 - reapplies the WAN side
 
@@ -813,7 +906,7 @@ sudo chmod 644 /usr/share/arp-scan/ieee-oui.txt /usr/share/arp-scan/mac-vendor.t
 Run:
 
 ```bash
-systemctl status hostapd --no-pager
+sudo systemctl status hostapd --no-pager
 iw dev "$AP_IF" info
 ```
 
@@ -834,7 +927,7 @@ sudo iptables -S FORWARD
 Run:
 
 ```bash
-cat /etc/systemd/network/10-fpv-wan.network
+cat /etc/netplan/01-router.yaml
 ip route
 ```
 
@@ -856,7 +949,5 @@ sudo systemctl restart wifi-powersave-off
 
 ---
 
-This version keeps the commands the same across different Raspberry Pi 4 builds and different USB Wi-Fi dongles because the interface names are detected automatically and stored as variables before the rest of the setup begins.
+The commands stay portable across different Raspberry Pi 4 builds and different USB Wi-Fi dongles because the interface names are detected automatically once and then reused when the router configuration is rendered.
 <br>  
-
-
