@@ -43,15 +43,126 @@ You need:
 
 ---
 
-## 0. Reset To A Clean Retry State Without Reflashing
+## 0. Flash Ubuntu Server onto the microSD card
 
-If the Pi already has a partial or failed router setup on the microSD card, run this step before starting again.
+Use the **official Raspberry Pi Imager**.
 
-If the microSD card is a fresh flash of Ubuntu Server and you have not run any router steps on it yet, you can skip this step.
+### 0.1 In Raspberry Pi Imager choose:
 
-This reset flow is also safe to run on a freshly flashed card. On a partially configured card, it removes the generated router config, restores the original cloud-init networking path used for first-boot SSH, clears saved NAT rules, and reboots the Pi so you can start again from Step 1 without reflashing.
+- **Device:** Raspberry Pi 4
+- **Operating System:** Ubuntu Server 24.04 LTS (64-bit)
+- **Storage:** your microSD card
 
-### 0.1 Create the reset script
+### 0.2 Open the OS customization settings
+
+When prompted, choose **Edit Settings**.
+
+Set:
+- **hostname**: choose the Linux hostname you want to use for this Pi
+- **username**: choose the Linux username you want to use over SSH
+- **password**: choose a password for that Linux user
+
+Example only: you might choose a hostname like gamboa, a username like router, and a password like secure_password_DO_NOT_USE_THIS_ONE!.
+
+Under **Configure Wireless LAN**, set the **initial upstream Wi-Fi** you want the Pi to use on first boot.
+
+This is your internet source for setup, such as home or office Wi-Fi.
+
+Set:
+- **SSID**: your upstream Wi-Fi network name
+- **Password**: your upstream Wi-Fi password
+
+Example only: an upstream Wi-Fi could be called WorkshopWiFi24, with a matching password such as ExamplePassword123.
+
+#### Services tab
+
+Enable:
+- **SSH**
+- **Use password authentication**
+
+Flash the card.
+
+The first boot can take several minutes while Ubuntu expands the filesystem and finishes cloud-init, so give it a little time before scanning for it.
+
+---
+
+## 1. Before the first SSH connection, make sure the setup conditions are correct
+
+This matters.
+
+### 1.1 Put the microSD card into the Pi
+
+### 1.2 Plug the USB Wi-Fi dongle into the Pi
+
+### 1.3 Power on the Pi
+
+### 1.4 Make sure your laptop and the Pi are on the same network
+
+For the first SSH session, the Pi will use the Wi-Fi you configured in Raspberry Pi Imager, usually through the Pi's built-in Wi-Fi.
+
+Your **laptop must be on that same network**.
+
+The USB Wi-Fi dongle is switched into the permanent upstream WAN role later in this guide.
+
+### 1.5 Prefer a 2.4 GHz setup network during initial setup
+
+For initial setup, make sure:
+
+- the Pi is joining a **2.4 GHz network**
+- your laptop is also on that same **2.4 GHz network**
+- the network does not isolate wireless clients from each other
+
+If your router uses the same SSID for both 2.4 GHz and 5 GHz, create or choose a **dedicated 2.4 GHz SSID** for setup if possible.
+
+This avoids common SSH discovery problems.
+
+---
+
+## 2. SSH into the Pi
+
+### 2.1 Save the SSH target values in your laptop terminal
+
+Run these commands on your laptop:
+
+```bash
+read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
+read -rp "Enter the Linux hostname chosen in Raspberry Pi Imager, without .local: " PI_HOST
+```
+
+Example only: if the Linux username were `router` and the Linux hostname were `gamboa`, the saved values would be equivalent to `PI_USER=router` and `PI_HOST=gamboa`.
+
+### 2.2 Try the `.local` hostname first
+
+```bash
+ssh "${PI_USER}@${PI_HOST}.local"
+```
+
+### 2.3 Scan for the Pi if the `.local` hostname does not work
+
+```bash
+sudo arp-scan --localnet
+```
+
+### 2.4 Connect by IP if needed
+
+Look for the Pi's IP in the scan output, then run:
+
+```bash
+read -rp "Enter the Pi IP address shown by arp-scan: " PI_IP
+ssh "${PI_USER}@${PI_IP}"
+```
+
+Once in, everything else in this tutorial is done from your laptop over SSH.
+
+---
+
+## 3. Reset To A Clean Retry State Without Reflashing
+
+Run this step once after the first SSH login, even on a freshly flashed microSD card.
+
+On a fresh flash, it should leave the Pi in the same clean pre-router state and reboot cleanly. On a partially configured card, it removes the generated router config, restores the original cloud-init networking path used for first-boot SSH, clears saved NAT rules, and reboots the Pi so you can continue from the normal pre-router state without reflashing.
+
+### 3.1 Create the reset script
 
 ```bash
 sudo tee /usr/local/sbin/fpv-router-reset-for-retry >/dev/null <<'EOF'
@@ -149,120 +260,99 @@ EOF
 sudo chmod +x /usr/local/sbin/fpv-router-reset-for-retry
 ```
 
-### 0.2 Run the reset script
+### 3.2 Run the reset script
 
 ```bash
 sudo /usr/local/sbin/fpv-router-reset-for-retry
 ```
 
-### 0.3 Reconnect after the reboot
+### 3.3 Check that reset worked properly
 
-After the Pi reboots, reconnect the same way you did on first boot.
-
-If you ran Step 0 on an already-flashed microSD card, continue with Step 2 and use the Linux hostname, Linux username, Linux password, and initial upstream Wi-Fi that are already stored on that card.
-
-If you are working from a fresh flash, skip Step 0 and start with Step 1.
-
----
-
-## 1. Flash Ubuntu Server onto the microSD card
-
-Use the **official Raspberry Pi Imager**.
-
-### 1.1 In Raspberry Pi Imager choose:
-
-- **Device:** Raspberry Pi 4
-- **Operating System:** Ubuntu Server 24.04 LTS (64-bit)
-- **Storage:** your microSD card
-
-### 1.2 Open the OS customization settings
-
-When prompted, choose **Edit Settings**.
-
-Set:
-- **hostname**: choose the Linux hostname you want to use for this Pi
-- **username**: choose the Linux username you want to use over SSH
-- **password**: choose a password for that Linux user
-
-Example only: you might choose a hostname like gamboa, a username like router, and a password like secure_password_DO_NOT_USE_THIS_ONE!.
-
-Under **Configure Wireless LAN**, set the **initial upstream Wi-Fi** you want the Pi to use on first boot.
-
-This is your internet source for setup, such as home or office Wi-Fi.
-
-Set:
-- **SSID**: your upstream Wi-Fi network name
-- **Password**: your upstream Wi-Fi password
-
-Example only: an upstream Wi-Fi could be called WorkshopWiFi24, with a matching password such as ExamplePassword123.
-
-#### Services tab
-
-Enable:
-- **SSH**
-- **Use password authentication**
-
-Flash the card.
-
-The first boot can take several minutes while Ubuntu expands the filesystem and finishes cloud-init, so give it a little time before scanning for it.
-
----
-
-## 2. Before the first SSH connection, make sure the setup conditions are correct
-
-This matters.
-
-### 2.1 Put the microSD card into the Pi
-
-### 2.2 Plug the USB Wi-Fi dongle into the Pi
-
-### 2.3 Power on the Pi
-
-### 2.4 Make sure your laptop and the Pi are on the same network
-
-For the first SSH session, the Pi will use the Wi-Fi you configured in Raspberry Pi Imager, usually through the Pi's built-in Wi-Fi.
-
-Your **laptop must be on that same network**.
-
-The USB Wi-Fi dongle is switched into the permanent upstream WAN role later in this guide.
-
-### 2.5 Prefer a 2.4 GHz setup network during initial setup
-
-For initial setup, make sure:
-
-- the Pi is joining a **2.4 GHz network**
-- your laptop is also on that same **2.4 GHz network**
-- the network does not isolate wireless clients from each other
-
-If your router uses the same SSID for both 2.4 GHz and 5 GHz, create or choose a **dedicated 2.4 GHz SSID** for setup if possible.
-
-This avoids common SSH discovery problems.
-
----
-
-## 3. SSH into the Pi
-
-SSH into the Pi with the following command:
-
-**EXAMPLE ONLY**:
-
-`ssh <LINUX_USERNAME>@<LINUX_HOSTNAME>.local`
-
-The command above is an **EXAMPLE ONLY!**  If the Linux username were `router` and the Linux hostname were `gamboa`, those are the values that would replace the placeholders in the command above.  The command would then look like: 
-
-`ssh router@gamboa.local`
-
-If that does not work, scan your local network from the laptop:
+After the Pi reboots, reconnect the same way you did in Step 2, then run:
 
 ```bash
-sudo arp-scan --localnet
+bash <<'EOF'
+set -u
+
+FAILED=0
+
+pass() { printf '[PASS] %s\n' "$1"; }
+fail() { printf '[FAIL] %s\n' "$1"; FAILED=1; }
+info() { printf '[INFO] %s\n' "$1"; }
+
+check_absent() {
+  local path="$1"
+  local label="$2"
+  if [ ! -e "$path" ]; then
+    pass "${label} is absent"
+  else
+    fail "${label} is still present at ${path}"
+  fi
+}
+
+check_not_active() {
+  local unit="$1"
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    fail "${unit} is still active"
+  else
+    pass "${unit} is not active"
+  fi
+}
+
+check_not_enabled() {
+  local unit="$1"
+  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    fail "${unit} is still enabled"
+  else
+    pass "${unit} is not enabled"
+  fi
+}
+
+check_absent "/etc/netplan/01-router.yaml" "Router netplan file"
+check_absent "/etc/systemd/network/11-fpv-ap.network" "AP-side networkd file"
+check_absent "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg" "Cloud-init network-disable file"
+check_absent "$HOME/.config/fpv-router/router.env" "Router environment file"
+check_absent "/etc/fpv-router/uplinks.conf" "Remembered uplink file"
+
+check_not_active hostapd.service
+check_not_active dnsmasq.service
+check_not_active wifi-powersave-off.service
+check_not_active netfilter-persistent.service
+
+check_not_enabled hostapd.service
+check_not_enabled dnsmasq.service
+check_not_enabled wifi-powersave-off.service
+check_not_enabled netfilter-persistent.service
+
+if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
+  fail "Router-side static IP 10.42.0.1/24 is still present"
+else
+  pass "Router-side static IP 10.42.0.1/24 is not present"
+fi
+
+if [ -f /etc/netplan/50-cloud-init.yaml ]; then
+  pass "cloud-init netplan file is present for the normal first-boot-style SSH path"
+elif [ -f /etc/netplan/50-cloud-init.yaml.disabled ]; then
+  fail "cloud-init netplan file is still disabled"
+else
+  info "cloud-init netplan file was not found; if SSH works over the normal upstream path, continue"
+fi
+
+if [ "${FAILED}" -ne 0 ]; then
+  echo
+  echo "Reset check found one or more problems."
+  echo "Re-run Step 3 or reflash the microSD card if the Pi still does not behave like a pre-router system."
+  exit 1
+fi
+
+echo
+echo "Reset check passed. The Pi is ready to continue with the router setup."
+EOF
 ```
 
-Look for the Pi’s IP, then connect with:
+### 3.4 Continue after the reboot
 
-`ssh <LINUX_USERNAME>@<PI_IP_ADDRESS>`
-
-Once in, everything else in this tutorial is done from your laptop over SSH.
+If Step 3 passed, continue with Step 4.
 
 ---
 
@@ -328,6 +418,76 @@ fi
 
 CONFIG_DIR="${USER_HOME}/.config/fpv-router"
 ENV_FILE="${CONFIG_DIR}/router.env"
+EXISTING_AP_SSID=""
+EXISTING_AP_PSK=""
+EXISTING_WIFI_COUNTRY="US"
+ENTERED_AP_SSID=""
+ENTERED_AP_PSK=""
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default="${2:-N}"
+  local reply=""
+
+  while true; do
+    if [ "${default}" = "Y" ]; then
+      printf '%s [Y/n]: ' "${prompt}"
+    else
+      printf '%s [y/N]: ' "${prompt}"
+    fi
+
+    read -r reply
+    reply="${reply:-${default}}"
+
+    case "${reply}" in
+      y|Y) return 0 ;;
+      n|N) return 1 ;;
+      *) echo "Please enter y or n." ;;
+    esac
+  done
+}
+
+prompt_for_ap_ssid() {
+  local entered=""
+
+  while true; do
+    printf 'Enter the router AP name (SSID): '
+    read -r entered
+
+    if [ -z "${entered}" ]; then
+      echo "AP SSID cannot be empty."
+      continue
+    fi
+
+    ENTERED_AP_SSID="${entered}"
+    return 0
+  done
+}
+
+prompt_for_ap_password() {
+  local password_1=""
+  local password_2=""
+
+  while true; do
+    read -rsp "Enter the router AP password (8 to 63 characters): " password_1
+    echo
+    read -rsp "Re-enter the router AP password: " password_2
+    echo
+
+    if [ "${password_1}" != "${password_2}" ]; then
+      echo "The passwords did not match. Try again."
+      continue
+    fi
+
+    if [ "${#password_1}" -lt 8 ] || [ "${#password_1}" -gt 63 ]; then
+      echo "The router AP password must be between 8 and 63 characters."
+      continue
+    fi
+
+    ENTERED_AP_PSK="${password_1}"
+    return 0
+  done
+}
 
 mapfile -t WIFI_IFACES < <(iw dev | awk '$1=="Interface"{print $2}')
 
@@ -366,21 +526,46 @@ if [ -z "$AP_IF" ]; then
   exit 1
 fi
 
+if [ -f "${ENV_FILE}" ]; then
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  EXISTING_AP_SSID="${AP_SSID:-}"
+  EXISTING_AP_PSK="${AP_PSK:-}"
+  EXISTING_WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+fi
+
+if [ -n "${EXISTING_AP_SSID}" ] && [ -n "${EXISTING_AP_PSK}" ]; then
+  echo
+  echo "Current router AP name: ${EXISTING_AP_SSID}"
+  if prompt_yes_no "Keep the current router AP name and password?" "Y"; then
+    ENTERED_AP_SSID="${EXISTING_AP_SSID}"
+    ENTERED_AP_PSK="${EXISTING_AP_PSK}"
+  else
+    prompt_for_ap_ssid
+    prompt_for_ap_password
+  fi
+else
+  echo
+  echo "Choose the Wi-Fi name and password that clients will use to connect to this router."
+  prompt_for_ap_ssid
+  prompt_for_ap_password
+fi
+
 install -d -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 700 "${CONFIG_DIR}"
 install -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 600 /dev/null "${ENV_FILE}"
 
-cat >"${ENV_FILE}" <<ENV
-export WAN_IF="${WAN_IF}"
-export AP_IF="${AP_IF}"
-export LAN_IP="10.42.0.1"
-export LAN_CIDR="10.42.0.1/24"
-export LAN_NET="10.42.0.0/24"
-export DHCP_START="10.42.0.50"
-export DHCP_END="10.42.0.150"
-export AP_SSID="<SET_AP_SSID>"
-export AP_PSK="<SET_AP_PASSWORD>"
-export WIFI_COUNTRY="US"
-ENV
+{
+  printf 'export WAN_IF=%q\n' "${WAN_IF}"
+  printf 'export AP_IF=%q\n' "${AP_IF}"
+  printf 'export LAN_IP=%q\n' "10.42.0.1"
+  printf 'export LAN_CIDR=%q\n' "10.42.0.1/24"
+  printf 'export LAN_NET=%q\n' "10.42.0.0/24"
+  printf 'export DHCP_START=%q\n' "10.42.0.50"
+  printf 'export DHCP_END=%q\n' "10.42.0.150"
+  printf 'export AP_SSID=%q\n' "${ENTERED_AP_SSID}"
+  printf 'export AP_PSK=%q\n' "${ENTERED_AP_PSK}"
+  printf 'export WIFI_COUNTRY=%q\n' "${EXISTING_WIFI_COUNTRY}"
+} > "${ENV_FILE}"
 
 chown "${TARGET_USER}:${TARGET_GROUP}" "${ENV_FILE}"
 chmod 600 "${ENV_FILE}"
@@ -389,6 +574,8 @@ echo
 echo "Wrote ${ENV_FILE} with:"
 echo "  WAN_IF=${WAN_IF}"
 echo "  AP_IF=${AP_IF}"
+echo "  AP_SSID=${ENTERED_AP_SSID}"
+echo "  AP password length=${#ENTERED_AP_PSK}"
 echo
 EOF
 
@@ -413,15 +600,13 @@ source ~/.bashrc
 
 ### 5.4 Verify what was detected
 
-Before continuing, open `~/.config/fpv-router/router.env` in a text editor and replace the placeholder values in `AP_SSID` and `AP_PSK`.
-
-`AP_PSK` must be between 8 and 63 characters.
-
-Example only: the AP name could be Rodriguez and the AP password could be ChangeThisPasswordNow.
+The script already asked you for the router AP name and password and wrote them into `~/.config/fpv-router/router.env`, so there is no hand-edit step here.
 
 ```bash
 echo "WAN_IF=$WAN_IF"
 echo "AP_IF=$AP_IF"
+echo "AP_SSID=$AP_SSID"
+printf 'AP_PSK_LENGTH=%s\n' "${#AP_PSK}"
 ip link
 iw dev
 ```
@@ -429,6 +614,7 @@ iw dev
 You should see:
 - `$WAN_IF` = USB Wi-Fi dongle
 - `$AP_IF` = internal Pi Wi-Fi
+- `$AP_SSID` = the router AP name you entered
 
 ---
 
@@ -824,7 +1010,9 @@ sudo arp-scan --localnet
 Then reconnect:
 
 ```bash
-ssh <LINUX_USERNAME>@<WAN_IP_OF_THE_PI>
+[ -n "${PI_USER:-}" ] || read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
+read -rp "Enter the current WAN IP of the Pi: " PI_WAN_IP
+ssh "${PI_USER}@${PI_WAN_IP}"
 ```
 
 After reconnecting, reload the environment:
@@ -846,9 +1034,7 @@ ip addr show "$AP_IF"
 
 You want to see:
 
-```text
-default via 192.168.x.1 dev <YOUR_WAN_IF> metric 100
-```
+- a default route that uses `$WAN_IF` with metric `100`
 
 And on `ip addr show "$AP_IF"` you want to see:
 
@@ -870,7 +1056,7 @@ Run:
 sudo reboot
 ```
 
-Reconnect again over SSH to the WAN IP, then run:
+Reconnect again over SSH the same way you did in Step 9.4, then run:
 
 ```bash
 source ~/.bashrc
@@ -967,7 +1153,7 @@ iw dev "$AP_IF" info
 ```
 
 At this point you want to see:
-- `ssid <your AP_SSID value>`
+- `ssid` matching the `AP_SSID` value you saved earlier
 - `type AP`
 
 If you see `type managed`, do not continue. That means something is still trying to use the AP interface as a client.
@@ -980,8 +1166,8 @@ With the tutorial above, it should be `type AP`.
 
 Connect your laptop, phone, or robot to:
 
-- **SSID**: the value stored in `AP_SSID` inside `~/.config/fpv-router/router.env`
-- **Password**: the value stored in `AP_PSK` inside `~/.config/fpv-router/router.env`
+- **SSID**: the router AP name you entered in Step 5
+- **Password**: the router AP password you entered in Step 5
 
 ### 16.1 Verify DHCP on the Pi
 
@@ -1414,7 +1600,8 @@ sudo chmod +x /usr/local/sbin/manage-uplink-wifis
 Connect to the router through the AP network:
 
 ```bash
-ssh <LINUX_USERNAME>@10.42.0.1
+[ -n "${PI_USER:-}" ] || read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
+ssh "${PI_USER}@10.42.0.1"
 ```
 
 Then run:
@@ -1488,7 +1675,7 @@ cat /etc/netplan/01-router.yaml
 ip route
 ```
 
-### Need to re-render everything after editing values
+### Need to re-render everything after changing saved values
 
 Run:
 
