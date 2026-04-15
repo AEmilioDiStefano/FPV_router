@@ -1,10 +1,21 @@
 # Git Workflow (`main` Source Of Truth + Optional Snapshot Tags)
 
-Use this workflow from the repo root:
+Use this workflow from any directory:
 
 ```bash
-cd /path/to/FPV_router
+FPV_ROUTER_BOOTSTRAP_ENV="$(find "${FPV_ROUTER_SEARCH_ROOT:-$HOME}" -maxdepth 8 -type f -path "*/scripts/fpv_router_bootstrap_env.sh" 2>/dev/null | sort | head -n1)"
+if [[ -z "${FPV_ROUTER_BOOTSTRAP_ENV:-}" ]]; then
+  echo "[FAIL] Could not locate FPV_router bootstrap helper under ${FPV_ROUTER_SEARCH_ROOT:-$HOME}." >&2
+  return 1 2>/dev/null || exit 1
+fi
+source "$FPV_ROUTER_BOOTSTRAP_ENV" --interactive
+unset FPV_ROUTER_BOOTSTRAP_ENV
+
+cd "$FPV_ROUTER_ROOT"
 ```
+
+This bootstrap exports `FPV_ROUTER_ROOT`, `FPR`, and `FPV_ROUTER_REPO_NAME`.
+If the repo is not somewhere under `$HOME`, set `FPV_ROUTER_SEARCH_ROOT` before running the snippet.
 
 Current GitHub remote:
 
@@ -38,7 +49,7 @@ This repo is mostly documentation and configuration, so there is no workspace re
 Use this when you are making a straightforward update directly on `main`.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git fetch origin --prune --tags
 git switch main
 git pull --ff-only origin main
@@ -62,7 +73,7 @@ Expected:
 Use this on another machine, or before you start work locally.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git fetch origin --prune --tags
 git switch main
 git pull --ff-only origin main
@@ -80,7 +91,7 @@ Expected:
 Use this when you want an isolated branch for a focused change.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git fetch origin --prune --tags
 git switch main
 git pull --ff-only origin main
@@ -101,7 +112,7 @@ Examples:
 Use this while the branch is in progress or when you want to open a PR.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 : "${BRANCH_NAME:?Set BRANCH_NAME first}"
 git switch "$BRANCH_NAME"
 
@@ -119,7 +130,7 @@ git status --short
 After the first push, later updates can use:
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git switch "$BRANCH_NAME"
 git add -A
 git commit -m "updates"
@@ -131,7 +142,7 @@ git push
 Use this if `main` moved forward while your branch was open.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 : "${BRANCH_NAME:?Set BRANCH_NAME first}"
 
 git fetch origin --prune --tags
@@ -157,7 +168,7 @@ git push
 Use this after the feature branch is merged on GitHub, or after you merge it locally.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 : "${BRANCH_NAME:?Set BRANCH_NAME first}"
 
 git fetch origin --prune --tags
@@ -179,7 +190,7 @@ git push origin --delete "$BRANCH_NAME"
 Use this when you decide "this exact state is known-good and I may want to recover or share it later".
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git fetch origin --prune --tags
 git switch main
 git pull --ff-only origin main
@@ -203,7 +214,7 @@ Important:
 Use this to make another machine match an exact tagged state.
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 : "${SNAPSHOT_REF:?Set SNAPSHOT_REF first}"
 
 git stash push -u -m "pre-snapshot-sync-$(date +%F-%H%M%S)" || true
@@ -228,7 +239,7 @@ Expected:
 To go back to normal development afterwards:
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git switch main
 git pull --ff-only origin main
 ```
@@ -243,7 +254,7 @@ git pull --ff-only origin main
 6. If `git status --short` is not clean before a pull, either commit your work or stash it first:
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git status --short
 git stash push -u -m "temp-$(date +%F-%H%M%S)"
 git pull --ff-only origin main
@@ -252,7 +263,7 @@ git pull --ff-only origin main
 7. If you used a snapshot tag with detached `HEAD`, switch back to `main` before doing normal development work:
 
 ```bash
-cd /path/to/FPV_router
+cd "$FPV_ROUTER_ROOT"
 git switch main
 git pull --ff-only origin main
 ```
