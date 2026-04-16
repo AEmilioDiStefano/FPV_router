@@ -107,7 +107,7 @@ remove_unit_enable_links() {
     -delete 2>/dev/null || true
 }
 
-disable_and_mask_package_unit_if_present() {
+stop_unit_if_present() {
   local unit="$1"
   local output=""
 
@@ -115,18 +115,6 @@ disable_and_mask_package_unit_if_present() {
     if ! output="$(systemctl stop "${unit}" 2>&1)"; then
       mark_cleanup_error "Failed to stop ${unit}: ${output}"
     fi
-
-    if ! output="$(systemctl disable "${unit}" 2>&1)"; then
-      mark_cleanup_error "Failed to disable ${unit}: ${output}"
-    fi
-
-    remove_unit_enable_links "${unit}"
-
-    if ! ln -sfn /dev/null "/etc/systemd/system/${unit}" 2>/dev/null; then
-      mark_cleanup_error "Failed to create a mask symlink for ${unit}"
-    fi
-
-    systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -148,10 +136,29 @@ disable_local_unit_if_present() {
   fi
 }
 
-disable_and_mask_package_unit_if_present hostapd.service
-disable_and_mask_package_unit_if_present dnsmasq.service
+stop_unit_if_present hostapd.service
+stop_unit_if_present dnsmasq.service
 disable_local_unit_if_present wifi-powersave-off.service
-disable_and_mask_package_unit_if_present netfilter-persistent.service
+stop_unit_if_present netfilter-persistent.service
+
+PACKAGE_PURGE_LIST=()
+for pkg in hostapd dnsmasq iptables-persistent netfilter-persistent; do
+  if dpkg-query -W -f='${Status}\n' "${pkg}" 2>/dev/null | grep -qx 'install ok installed'; then
+    PACKAGE_PURGE_LIST+=("${pkg}")
+  fi
+done
+
+if [ "${#PACKAGE_PURGE_LIST[@]}" -ne 0 ]; then
+  PURGE_OUTPUT=""
+  if ! PURGE_OUTPUT="$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${PACKAGE_PURGE_LIST[@]}" 2>&1)"; then
+    mark_cleanup_error "Failed to purge router packages from the previous attempt: ${PURGE_OUTPUT}"
+  fi
+fi
+
+remove_unit_enable_links hostapd.service
+remove_unit_enable_links dnsmasq.service
+remove_unit_enable_links wifi-powersave-off.service
+remove_unit_enable_links netfilter-persistent.service
 
 iptables -F >/dev/null 2>&1 || true
 iptables -t nat -F >/dev/null 2>&1 || true
@@ -163,6 +170,9 @@ rm -f /etc/iptables/rules.v6
 rm -f /etc/netplan/01-router.yaml
 rm -f /etc/systemd/network/11-fpv-ap.network
 rm -f /etc/systemd/network/10-fpv-wan.network
+rm -f /etc/systemd/system/hostapd.service
+rm -f /etc/systemd/system/dnsmasq.service
+rm -f /etc/systemd/system/netfilter-persistent.service
 rm -f /etc/systemd/system/wifi-powersave-off.service
 rm -f /etc/systemd/system/hostapd.service.d/override.conf
 rmdir /etc/systemd/system/hostapd.service.d 2>/dev/null || true

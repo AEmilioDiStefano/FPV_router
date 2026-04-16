@@ -201,7 +201,7 @@ If it says a reset is needed and then your SSH session disconnects, wait 30 to 1
 
 If it prints `Reset cleanup did not fully succeed. Reboot has been cancelled.`, do not continue yet. Fix the reported problems, reinstall the latest helper scripts from Step 2 if needed, and then re-run the reset helper.
 
-If the reset helper does have to clean up an earlier attempt, it may mask package-managed router services so they cannot stay accidentally enabled between attempts. Later steps in this tutorial unmask those services again at the exact point where they are needed.
+If the reset helper does have to clean up an earlier attempt, it may purge the package-managed router services that were installed later in this tutorial. That is intentional. Step 4 reinstalls those router packages cleanly.
 
 The reset helper verifies the persistent cleanup before rebooting. Step 3.2 is where you confirm that the post-reboot runtime state is clean too.
 
@@ -242,6 +242,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y \
 ```
 
 `wpasupplicant` is included explicitly because Ubuntu's `networkd` Wi-Fi client path depends on it.
+
+If Step 3 had to clean up a previous router setup, this step reinstalls the router packages that the reset helper purged on purpose.
 
 Stop the router services while configuring:
 
@@ -435,18 +437,10 @@ sudo sysctl --system
 sudo systemctl restart systemd-journald
 ```
 
-### 12.2 Unmask the AP services if Step 3 had to reset an earlier attempt
-
-If Step 3 had to clean up a previous router setup, `hostapd` and `dnsmasq` may still be masked on purpose until this point.
+### 12.2 Enable the AP services
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl unmask hostapd dnsmasq
-```
-
-### 12.3 Enable the AP services
-
-```bash
 sudo systemctl enable hostapd dnsmasq wifi-powersave-off
 ```
 
@@ -471,11 +465,10 @@ sudo iptables -A FORWARD -i "$WAN_IF" -o "$AP_IF" -m conntrack --ctstate RELATED
 
 ### 13.3 Save them persistently
 
-If Step 3 had to clean up a previous router setup, `netfilter-persistent` may still be masked on purpose until this point.
+If Step 3 had to clean up a previous router setup, this step recreates the persistent netfilter service state after Step 4 reinstalled the relevant packages.
 
 ```bash
 sudo netfilter-persistent save
-sudo systemctl unmask netfilter-persistent
 sudo systemctl enable netfilter-persistent
 ```
 
