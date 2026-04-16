@@ -49,31 +49,49 @@ PI_USER="${PI_USER_ARG:-${PI_USER:-}}"
 PI_HOST="${PI_HOST_ARG:-${PI_SSH_TARGET:-${PI_IP:-${PI_HOST:-}}}}"
 
 if [ -z "${PI_USER}" ]; then
-  read -rp "Enter the Linux username for the Pi: " PI_USER
+  read -rp "Enter the Linux USERNAME for the ROUTER Pi: " PI_USER
 fi
 
 if [ -z "${PI_HOST}" ]; then
-  read -rp "Enter the Pi SSH hostname or IP: " PI_HOST
+  read -rp "Enter the ROUTER Pi SSH hostname or IP: " PI_HOST
 fi
 
 if [ -z "${PI_USER}" ] || [ -z "${PI_HOST}" ]; then
-  echo "ERROR: Both the Pi username and the Pi SSH host are required." >&2
+  echo "ERROR: Both the router Pi username and the router Pi SSH host are required." >&2
   exit 1
 fi
 
 TARGET="${PI_USER}@${PI_HOST}"
 REMOTE_TMP="/tmp/fpv-router-helper-install.$$"
+CONTROL_PATH="/tmp/fpv-router-ssh-%r@%h:%p-$$"
 
 echo "Installing FPV router helper scripts to ${TARGET}..."
 
-ssh "${TARGET}" "mkdir -p '${REMOTE_TMP}'"
-scp "${HELPER_DIR}/"* "${TARGET}:${REMOTE_TMP}/"
-ssh -t "${TARGET}" "\
-  sudo install -d -m 755 /usr/local/sbin && \
-  for file in ${REMOTE_TMP}/*; do \
-    sudo install -m 755 \"\$file\" /usr/local/sbin/; \
-  done && \
-  rm -rf '${REMOTE_TMP}'"
+cleanup() {
+  ssh -o ControlPath="${CONTROL_PATH}" -O exit "${TARGET}" >/dev/null 2>&1 || true
+  rm -f "${CONTROL_PATH}"
+}
+
+trap cleanup EXIT
+
+ssh \
+  -o ControlMaster=yes \
+  -o ControlPersist=60 \
+  -o ControlPath="${CONTROL_PATH}" \
+  -fN \
+  "${TARGET}"
+
+ssh -o ControlPath="${CONTROL_PATH}" "${TARGET}" "mkdir -p '${REMOTE_TMP}'"
+scp -o ControlPath="${CONTROL_PATH}" "${HELPER_DIR}/"* "${TARGET}:${REMOTE_TMP}/"
+ssh -t -o ControlPath="${CONTROL_PATH}" "${TARGET}" "\
+  sudo bash -lc '
+    set -euo pipefail
+    install -d -m 755 /usr/local/sbin
+    for file in \"${REMOTE_TMP}\"/*; do
+      install -m 755 \"\$file\" /usr/local/sbin/
+    done
+    rm -rf \"${REMOTE_TMP}\"
+  '"
 
 echo
 echo "Installed helper scripts on ${TARGET}:"
