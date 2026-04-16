@@ -36,11 +36,17 @@ check_not_active() {
 
 check_not_enabled() {
   local unit="$1"
-  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-    fail "${unit} is still enabled"
-  else
-    pass "${unit} is not enabled"
-  fi
+  local state=""
+
+  state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "${state}" in
+    enabled|enabled-runtime|linked|linked-runtime)
+      fail "${unit} is still enabled"
+      ;;
+    *)
+      pass "${unit} is not enabled"
+      ;;
+  esac
 }
 
 check_absent "/etc/netplan/01-router.yaml" "Router netplan file"

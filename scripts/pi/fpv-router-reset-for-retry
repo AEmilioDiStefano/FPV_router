@@ -49,9 +49,14 @@ check_unit_active_for_reset() {
 
 check_unit_enabled_for_reset() {
   local unit="$1"
-  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
-    mark_reset_needed "${unit} is enabled"
-  fi
+  local state=""
+
+  state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+  case "${state}" in
+    enabled|enabled-runtime|linked|linked-runtime)
+      mark_reset_needed "${unit} is enabled"
+      ;;
+  esac
 }
 
 check_path_for_reset /etc/netplan/01-router.yaml "router netplan file exists"
@@ -93,7 +98,16 @@ echo "A reset is needed. Cleaning up the following router-state indicators:"
 printf '  - %s\n' "${RESET_REASONS[@]}"
 echo
 
-disable_unit_if_present() {
+remove_unit_enable_links() {
+  local unit="$1"
+
+  find /etc/systemd/system /run/systemd/system \
+    -type l \
+    \( -path "*/wants/${unit}" -o -path "*/requires/${unit}" -o -path "*/upholds/${unit}" \) \
+    -delete 2>/dev/null || true
+}
+
+disable_and_mask_package_unit_if_present() {
   local unit="$1"
   local output=""
 
@@ -106,18 +120,38 @@ disable_unit_if_present() {
       mark_cleanup_error "Failed to disable ${unit}: ${output}"
     fi
 
-    if ! output="$(systemctl mask "${unit}" 2>&1)"; then
-      mark_cleanup_error "Failed to mask ${unit}: ${output}"
+    remove_unit_enable_links "${unit}"
+
+    if ! ln -sfn /dev/null "/etc/systemd/system/${unit}" 2>/dev/null; then
+      mark_cleanup_error "Failed to create a mask symlink for ${unit}"
     fi
 
     systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
   fi
 }
 
-disable_unit_if_present hostapd.service
-disable_unit_if_present dnsmasq.service
-disable_unit_if_present wifi-powersave-off.service
-disable_unit_if_present netfilter-persistent.service
+disable_local_unit_if_present() {
+  local unit="$1"
+  local output=""
+
+  if systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qxF "${unit}"; then
+    if ! output="$(systemctl stop "${unit}" 2>&1)"; then
+      mark_cleanup_error "Failed to stop ${unit}: ${output}"
+    fi
+
+    if ! output="$(systemctl disable "${unit}" 2>&1)"; then
+      mark_cleanup_error "Failed to disable ${unit}: ${output}"
+    fi
+
+    remove_unit_enable_links "${unit}"
+    systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
+  fi
+}
+
+disable_and_mask_package_unit_if_present hostapd.service
+disable_and_mask_package_unit_if_present dnsmasq.service
+disable_local_unit_if_present wifi-powersave-off.service
+disable_and_mask_package_unit_if_present netfilter-persistent.service
 
 iptables -F >/dev/null 2>&1 || true
 iptables -t nat -F >/dev/null 2>&1 || true
@@ -171,18 +205,16 @@ verify_path_absent() {
   fi
 }
 
-verify_unit_not_active() {
-  local unit="$1"
-  if systemctl is-active --quiet "${unit}" 2>/dev/null; then
-    mark_cleanup_error "${unit} is still active after cleanup"
-  fi
-}
-
 verify_unit_not_enabled() {
   local unit="$1"
-  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
-    mark_cleanup_error "${unit} is still enabled after cleanup"
-  fi
+  local state=""
+
+  state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+  case "${state}" in
+    enabled|enabled-runtime|linked|linked-runtime)
+      mark_cleanup_error "${unit} is still enabled after cleanup"
+      ;;
+  esac
 }
 
 verify_path_absent /etc/netplan/01-router.yaml "Router netplan file"
@@ -194,19 +226,10 @@ if [ -n "${CONFIG_DIR}" ]; then
   verify_path_absent "${CONFIG_DIR}/router.env" "Router environment file"
 fi
 
-verify_unit_not_active hostapd.service
-verify_unit_not_active dnsmasq.service
-verify_unit_not_active wifi-powersave-off.service
-verify_unit_not_active netfilter-persistent.service
-
 verify_unit_not_enabled hostapd.service
 verify_unit_not_enabled dnsmasq.service
 verify_unit_not_enabled wifi-powersave-off.service
 verify_unit_not_enabled netfilter-persistent.service
-
-if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
-  mark_cleanup_error "Router-side static IP 10.42.0.1/24 is still present after cleanup"
-fi
 
 if [ -f /etc/netplan/50-cloud-init.yaml.disabled ]; then
   mark_cleanup_error "cloud-init netplan file is still disabled after cleanup"

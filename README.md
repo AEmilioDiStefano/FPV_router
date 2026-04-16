@@ -203,6 +203,10 @@ If it prints `Reset cleanup did not fully succeed. Reboot has been cancelled.`, 
 
 If the reset helper does have to clean up an earlier attempt, it may mask package-managed router services so they cannot stay accidentally enabled between attempts. Later steps in this tutorial unmask those services again at the exact point where they are needed.
 
+The reset helper verifies the persistent cleanup before rebooting. Step 3.2 is where you confirm that the post-reboot runtime state is clean too.
+
+On Ubuntu, some units can report non-enabled states such as `static` or `indirect`; the reset helper and reset verifier treat those correctly and only block on states that are actually persistently enabled.
+
 ### 3.2 Verify the reset if the helper rebooted the router Pi
 
 Only run this step if the reset helper actually rebooted the router Pi.
