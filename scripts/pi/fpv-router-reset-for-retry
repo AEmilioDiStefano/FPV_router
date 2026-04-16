@@ -106,6 +106,10 @@ disable_unit_if_present() {
       mark_cleanup_error "Failed to disable ${unit}: ${output}"
     fi
 
+    if ! output="$(systemctl mask "${unit}" 2>&1)"; then
+      mark_cleanup_error "Failed to mask ${unit}: ${output}"
+    fi
+
     systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
   fi
 }

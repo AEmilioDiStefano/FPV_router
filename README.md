@@ -201,6 +201,8 @@ If it says a reset is needed and then your SSH session disconnects, wait 30 to 1
 
 If it prints `Reset cleanup did not fully succeed. Reboot has been cancelled.`, do not continue yet. Fix the reported problems, reinstall the latest helper scripts from Step 2 if needed, and then re-run the reset helper.
 
+If the reset helper does have to clean up an earlier attempt, it may mask package-managed router services so they cannot stay accidentally enabled between attempts. Later steps in this tutorial unmask those services again at the exact point where they are needed.
+
 ### 3.2 Verify the reset if the helper rebooted the router Pi
 
 Only run this step if the reset helper actually rebooted the router Pi.
@@ -422,18 +424,25 @@ Confirm again that `$WAN_IF` is the default route.
 
 ## 12. Enable sysctls, journaling policy, and router services
 
-Apply sysctls:
+### 12.1 Apply sysctls
 
 ```bash
 sudo sysctl --system
 sudo systemctl restart systemd-journald
 ```
 
-Unmask and enable router services:
+### 12.2 Unmask the AP services if Step 3 had to reset an earlier attempt
+
+If Step 3 had to clean up a previous router setup, `hostapd` and `dnsmasq` may still be masked on purpose until this point.
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl unmask hostapd
+sudo systemctl unmask hostapd dnsmasq
+```
+
+### 12.3 Enable the AP services
+
+```bash
 sudo systemctl enable hostapd dnsmasq wifi-powersave-off
 ```
 
@@ -458,8 +467,11 @@ sudo iptables -A FORWARD -i "$WAN_IF" -o "$AP_IF" -m conntrack --ctstate RELATED
 
 ### 13.3 Save them persistently
 
+If Step 3 had to clean up a previous router setup, `netfilter-persistent` may still be masked on purpose until this point.
+
 ```bash
 sudo netfilter-persistent save
+sudo systemctl unmask netfilter-persistent
 sudo systemctl enable netfilter-persistent
 ```
 
