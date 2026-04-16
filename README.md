@@ -131,20 +131,20 @@ This avoids common SSH discovery problems.
 
 ---
 
-## 2. Install the Pi Helper Scripts and SSH into the Pi
+## 2. Install the Router Helper Scripts onto the Pi
 
-### 2.1 Save the SSH target values in your laptop terminal
+### 2.1 Save the router SSH target values in your laptop terminal
 
-Run these commands on your laptop:
+Run these commands on your laptop, not inside the router SSH session:
 
 ```bash
-read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
-read -rp "Enter the Linux hostname chosen in Raspberry Pi Imager, without .local: " PI_HOST
+read -rp "Enter the Linux USERNAME chosen in Raspberry Pi Imager for the ROUTER: " PI_USER
+read -rp "Enter the Linux HOSTNAME chosen in Raspberry Pi Imager for the ROUTER (without .local): " PI_HOST
 ```
 
 Example only: if the Linux username were `router` and the Linux hostname were `gamboa`, the saved values would be equivalent to `PI_USER=router` and `PI_HOST=gamboa`.
 
-### 2.2 Try the `.local` hostname as the current SSH target and install the helper scripts
+### 2.2 Try the `.local` hostname as the current router SSH target and install the router helper scripts
 
 Run this on your laptop from the repo root:
 
@@ -155,25 +155,25 @@ PI_SSH_TARGET="${PI_HOST}.local"
 
 If that works, continue to Step 2.4.
 
-### 2.3 If the `.local` hostname does not work, use `arp-scan` and the Pi IP instead
+### 2.3 If the `.local` hostname does not work, use `arp-scan` and the router Pi IP instead
 
 Run this on your laptop:
 
 ```bash
 sudo arp-scan --localnet
-read -rp "Enter the Pi IP address shown by arp-scan: " PI_SSH_TARGET
+read -rp "Enter the ROUTER Pi IP address shown by arp-scan: " PI_SSH_TARGET
 ./scripts/install_pi_helpers.sh --user "$PI_USER" --host "$PI_SSH_TARGET"
 ```
 
-### 2.4 SSH into the Pi
+### 2.4 SSH into the router
 
-After the helper installer succeeds, SSH into the Pi:
+After the helper installer succeeds, SSH into the router:
 
 ```bash
 ssh "${PI_USER}@${PI_SSH_TARGET}"
 ```
 
-The helper installer copies the tracked scripts from `scripts/pi/` in this repo onto the Pi and installs them into `/usr/local/sbin`, which removes the need to paste large script blocks into the Pi terminal.
+The helper installer copies the tracked router helper scripts from `scripts/pi/` in this repo onto the router Pi and installs them into `/usr/local/sbin`, which removes the need to paste large script blocks into the Pi terminal.
 
 ---
 
@@ -195,11 +195,11 @@ sudo /usr/local/sbin/fpv-router-reset-for-retry
 
 If the helper prints `No reset is needed.`, stay in the same SSH session and continue directly to Step 4.
 
-If it says a reset is needed and then your SSH session disconnects, wait 30 to 120 seconds for the Pi to reboot, then SSH back into the Pi the same way that worked in Step 2.4.
+If it says a reset is needed and then your SSH session disconnects, wait 30 to 120 seconds for the router Pi to reboot, then SSH back into the router the same way that worked in Step 2.4.
 
-### 3.2 Verify the reset if the helper rebooted the Pi
+### 3.2 Verify the reset if the helper rebooted the router Pi
 
-Only run this step if the reset helper actually rebooted the Pi.
+Only run this step if the reset helper actually rebooted the router Pi.
 
 ```bash
 sudo /usr/local/sbin/fpv-router-verify-reset
@@ -360,7 +360,7 @@ sudo netplan apply
 
 The network path usually changes here, so the SSH session you were using may stop responding. That is normal.
 
-SSH back into the Pi the same way that works on your network, then continue below.
+SSH back into the router the same way that works on your network, then continue below.
 
 ### Then source `.bashrc`
 
@@ -581,7 +581,7 @@ The uplink management helper was already installed onto the Pi in Step 2 and liv
 Connect to the router through the AP network:
 
 ```bash
-[ -n "${PI_USER:-}" ] || read -rp "Enter the Linux username chosen in Raspberry Pi Imager: " PI_USER
+[ -n "${PI_USER:-}" ] || read -rp "Enter the Linux USERNAME chosen in Raspberry Pi Imager for the ROUTER: " PI_USER
 ssh "${PI_USER}@10.42.0.1"
 ```
 
