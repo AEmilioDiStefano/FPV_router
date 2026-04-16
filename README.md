@@ -48,8 +48,8 @@ You need:
 Run these commands on your laptop:
 
 ```bash
-git clone https://github.com/AEmilioDiStefano/FPV_router.git
-cd FPV_router
+git clone https://github.com/AEmilioDiStefano/FPV_router.git "$HOME/FPV_router"
+cd "$HOME/FPV_router"
 ```
 
 The rest of this guide assumes you have this repo available on your laptop because you will use the tracked helper scripts in `scripts/pi/` instead of pasting large script blocks into the Pi terminal.
@@ -149,6 +149,7 @@ Example only: if the Linux username were `router` and the Linux hostname were `g
 Run this on your laptop from the repo root:
 
 ```bash
+cd "$HOME/FPV_router"
 PI_SSH_TARGET="${PI_HOST}.local"
 ./scripts/install_pi_helpers.sh --user "$PI_USER" --host "$PI_SSH_TARGET"
 ```
@@ -160,6 +161,7 @@ If that works, continue to Step 2.4.
 Run this on your laptop:
 
 ```bash
+cd "$HOME/FPV_router"
 sudo arp-scan --localnet
 read -rp "Enter the ROUTER Pi IP address shown by arp-scan: " PI_SSH_TARGET
 ./scripts/install_pi_helpers.sh --user "$PI_USER" --host "$PI_SSH_TARGET"
