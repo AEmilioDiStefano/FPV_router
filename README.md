@@ -199,6 +199,8 @@ If the helper prints `No reset is needed.`, stay in the same SSH session and con
 
 If it says a reset is needed and then your SSH session disconnects, wait 30 to 120 seconds for the router Pi to reboot, then SSH back into the router the same way that worked in Step 2.4.
 
+If it prints `Reset cleanup did not fully succeed. Reboot has been cancelled.`, do not continue yet. Fix the reported problems, reinstall the latest helper scripts from Step 2 if needed, and then re-run the reset helper.
+
 ### 3.2 Verify the reset if the helper rebooted the router Pi
 
 Only run this step if the reset helper actually rebooted the router Pi.

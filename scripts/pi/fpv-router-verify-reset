@@ -2,6 +2,14 @@
 set -u
 
 FAILED=0
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+ROUTER_ENV_PATH="$HOME/.config/fpv-router/router.env"
+
+if [ -n "${TARGET_USER}" ] && [ "${TARGET_UID}" -ge 1 ] && [ -n "${USER_HOME}" ]; then
+  ROUTER_ENV_PATH="${USER_HOME}/.config/fpv-router/router.env"
+fi
 
 pass() { printf '[PASS] %s\n' "$1"; }
 fail() { printf '[FAIL] %s\n' "$1"; FAILED=1; }
@@ -38,7 +46,7 @@ check_not_enabled() {
 check_absent "/etc/netplan/01-router.yaml" "Router netplan file"
 check_absent "/etc/systemd/network/11-fpv-ap.network" "AP-side networkd file"
 check_absent "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg" "Cloud-init network-disable file"
-check_absent "$HOME/.config/fpv-router/router.env" "Router environment file"
+check_absent "${ROUTER_ENV_PATH}" "Router environment file"
 check_absent "/etc/fpv-router/uplinks.conf" "Remembered uplink file"
 
 check_not_active hostapd.service

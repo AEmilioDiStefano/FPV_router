@@ -12,6 +12,7 @@ TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
 USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
 RESET_NEEDED=0
 declare -a RESET_REASONS=()
+declare -a CLEANUP_ERRORS=()
 
 CONFIG_DIR=""
 BASHRC_FILE=""
@@ -24,6 +25,11 @@ mark_reset_needed() {
   local reason="$1"
   RESET_NEEDED=1
   RESET_REASONS+=("${reason}")
+}
+
+mark_cleanup_error() {
+  local reason="$1"
+  CLEANUP_ERRORS+=("${reason}")
 }
 
 check_path_for_reset() {
@@ -89,8 +95,18 @@ echo
 
 disable_unit_if_present() {
   local unit="$1"
+  local output=""
+
   if systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qxF "${unit}"; then
-    systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+    if ! output="$(systemctl stop "${unit}" 2>&1)"; then
+      mark_cleanup_error "Failed to stop ${unit}: ${output}"
+    fi
+
+    if ! output="$(systemctl disable "${unit}" 2>&1)"; then
+      mark_cleanup_error "Failed to disable ${unit}: ${output}"
+    fi
+
+    systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -142,6 +158,63 @@ fi
 
 systemctl daemon-reload >/dev/null 2>&1 || true
 netplan generate >/dev/null 2>&1 || true
+
+verify_path_absent() {
+  local path="$1"
+  local label="$2"
+  if [ -e "${path}" ]; then
+    mark_cleanup_error "${label} is still present at ${path}"
+  fi
+}
+
+verify_unit_not_active() {
+  local unit="$1"
+  if systemctl is-active --quiet "${unit}" 2>/dev/null; then
+    mark_cleanup_error "${unit} is still active after cleanup"
+  fi
+}
+
+verify_unit_not_enabled() {
+  local unit="$1"
+  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+    mark_cleanup_error "${unit} is still enabled after cleanup"
+  fi
+}
+
+verify_path_absent /etc/netplan/01-router.yaml "Router netplan file"
+verify_path_absent /etc/systemd/network/11-fpv-ap.network "AP-side networkd file"
+verify_path_absent /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg "Cloud-init network-disable file"
+verify_path_absent /etc/fpv-router/uplinks.conf "Remembered uplink file"
+
+if [ -n "${CONFIG_DIR}" ]; then
+  verify_path_absent "${CONFIG_DIR}/router.env" "Router environment file"
+fi
+
+verify_unit_not_active hostapd.service
+verify_unit_not_active dnsmasq.service
+verify_unit_not_active wifi-powersave-off.service
+verify_unit_not_active netfilter-persistent.service
+
+verify_unit_not_enabled hostapd.service
+verify_unit_not_enabled dnsmasq.service
+verify_unit_not_enabled wifi-powersave-off.service
+verify_unit_not_enabled netfilter-persistent.service
+
+if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
+  mark_cleanup_error "Router-side static IP 10.42.0.1/24 is still present after cleanup"
+fi
+
+if [ -f /etc/netplan/50-cloud-init.yaml.disabled ]; then
+  mark_cleanup_error "cloud-init netplan file is still disabled after cleanup"
+fi
+
+if [ "${#CLEANUP_ERRORS[@]}" -ne 0 ]; then
+  echo
+  echo "Reset cleanup did not fully succeed. Reboot has been cancelled."
+  echo "Fix the following problems, then re-run the reset helper:"
+  printf '  - %s\n' "${CLEANUP_ERRORS[@]}"
+  exit 1
+fi
 
 echo
 echo "The Pi has been returned to the pre-router state used by this tutorial."
