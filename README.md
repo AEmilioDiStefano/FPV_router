@@ -245,6 +245,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y \
 
 If Step 3 had to clean up a previous router setup, this step reinstalls the router packages that the reset helper purged on purpose.
 
+On Ubuntu, the `hostapd` package may install in a masked state by default. That is normal. This guide handles that later in Step 12 after the router configuration files are already in place.
+
 Stop the router services while configuring:
 
 ```bash
@@ -437,10 +439,13 @@ sudo sysctl --system
 sudo systemctl restart systemd-journald
 ```
 
-### 12.2 Enable the AP services
+### 12.2 Unmask `hostapd` and enable the AP services
+
+Ubuntu commonly installs `hostapd` as masked by default. Unmask it here, after the router configuration has already been rendered.
 
 ```bash
 sudo systemctl daemon-reload
+sudo systemctl unmask hostapd
 sudo systemctl enable hostapd dnsmasq wifi-powersave-off
 ```
 
@@ -649,6 +654,8 @@ iw dev "$AP_IF" info
 ```
 
 If `$AP_IF` is not `type AP`, the AP side is not fully claimed by hostapd.
+
+If `systemctl status hostapd` says the unit is masked, go back to Step 12.2 and make sure you ran the `systemctl unmask hostapd` line before enabling or restarting the AP services.
 
 ### Clients connect but get no internet
 
