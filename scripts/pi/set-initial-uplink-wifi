@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
+SSID=""
+PASSWORD_1=""
+PASSWORD_2=""
+
+mkdir -p /etc/fpv-router
+
+if [ -s "${UPLINKS_FILE}" ]; then
+  echo
+  echo "The current remembered upstream Wi-Fi list is:"
+  awk -F'|' 'NF >= 1 && $1 !~ /^#/ && $1 != "" {print "  - " $1}' "${UPLINKS_FILE}"
+  echo
+  printf 'Overwrite that list with one initial upstream Wi-Fi entry? [y/N]: '
+  read -r OVERWRITE_REPLY
+  case "${OVERWRITE_REPLY:-N}" in
+    y|Y) ;;
+    *) echo "Initial uplink setup cancelled."; exit 0 ;;
+  esac
+fi
+
+while true; do
+  printf 'Enter the upstream Wi-Fi SSID: '
+  read -r SSID
+
+  if [ -z "${SSID}" ]; then
+    echo "SSID cannot be empty."
+    continue
+  fi
+
+  if [[ "${SSID}" == *"|"* ]]; then
+    echo "The '|' character cannot be used inside the SSID."
+    continue
+  fi
+
+  break
+done
+
+while true; do
+  read -rsp "Enter the upstream Wi-Fi password: " PASSWORD_1
+  echo
+  read -rsp "Re-enter the upstream Wi-Fi password: " PASSWORD_2
+  echo
+
+  if [ -z "${PASSWORD_1}" ]; then
+    echo "Password cannot be empty."
+    continue
+  fi
+
+  if [[ "${PASSWORD_1}" == *"|"* ]]; then
+    echo "The '|' character cannot be used inside the password."
+    continue
+  fi
+
+  if [ "${PASSWORD_1}" != "${PASSWORD_2}" ]; then
+    echo "The passwords did not match. Try again."
+    continue
+  fi
+
+  break
+done
+
+printf '%s|%s\n' "${SSID}" "${PASSWORD_1}" > "${UPLINKS_FILE}"
+chmod 600 "${UPLINKS_FILE}"
+
+echo
+echo "Saved initial upstream Wi-Fi: ${SSID}"
+echo "The remembered uplink list now contains exactly one entry."

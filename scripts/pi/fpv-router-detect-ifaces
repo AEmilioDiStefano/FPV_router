@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+if [ -z "${TARGET_USER}" ] || [ "${TARGET_UID}" -eq 0 ]; then
+  echo "ERROR: Could not determine which regular Linux user should own the router config files." >&2
+  echo "Run this command with sudo from the Linux user account you plan to use over SSH." >&2
+  exit 1
+fi
+
+TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+if [ -z "${TARGET_GROUP}" ] || [ -z "${USER_HOME}" ]; then
+  echo "ERROR: Could not determine the home directory for ${TARGET_USER}." >&2
+  exit 1
+fi
+
+CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+ENV_FILE="${CONFIG_DIR}/router.env"
+EXISTING_AP_SSID=""
+EXISTING_AP_PSK=""
+EXISTING_WIFI_COUNTRY="US"
+ENTERED_AP_SSID=""
+ENTERED_AP_PSK=""
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default="${2:-N}"
+  local reply=""
+
+  while true; do
+    if [ "${default}" = "Y" ]; then
+      printf '%s [Y/n]: ' "${prompt}"
+    else
+      printf '%s [y/N]: ' "${prompt}"
+    fi
+
+    read -r reply
+    reply="${reply:-${default}}"
+
+    case "${reply}" in
+      y|Y) return 0 ;;
+      n|N) return 1 ;;
+      *) echo "Please enter y or n." ;;
+    esac
+  done
+}
+
+prompt_for_ap_ssid() {
+  local entered=""
+
+  while true; do
+    printf 'Enter the router AP name (SSID): '
+    read -r entered
+
+    if [ -z "${entered}" ]; then
+      echo "AP SSID cannot be empty."
+      continue
+    fi
+
+    ENTERED_AP_SSID="${entered}"
+    return 0
+  done
+}
+
+prompt_for_ap_password() {
+  local password_1=""
+  local password_2=""
+
+  while true; do
+    read -rsp "Enter the router AP password (8 to 63 characters): " password_1
+    echo
+    read -rsp "Re-enter the router AP password: " password_2
+    echo
+
+    if [ "${password_1}" != "${password_2}" ]; then
+      echo "The passwords did not match. Try again."
+      continue
+    fi
+
+    if [ "${#password_1}" -lt 8 ] || [ "${#password_1}" -gt 63 ]; then
+      echo "The router AP password must be between 8 and 63 characters."
+      continue
+    fi
+
+    ENTERED_AP_PSK="${password_1}"
+    return 0
+  done
+}
+
+mapfile -t WIFI_IFACES < <(iw dev | awk '$1=="Interface"{print $2}')
+
+if [ "${#WIFI_IFACES[@]}" -lt 2 ]; then
+  echo "ERROR: Need two Wi-Fi interfaces (internal Pi radio + USB Wi-Fi dongle)." >&2
+  echo "Make sure the USB Wi-Fi dongle is plugged in before running this script." >&2
+  exit 1
+fi
+
+WAN_IF=""
+AP_IF=""
+
+for IFACE in "${WIFI_IFACES[@]}"; do
+  DEVPATH="$(readlink -f "/sys/class/net/${IFACE}/device" || true)"
+  if [[ "${DEVPATH}" == *"/usb"* || "${DEVPATH}" == *"usb"* ]]; then
+    WAN_IF="${IFACE}"
+    break
+  fi
+done
+
+if [ -z "${WAN_IF}" ]; then
+  echo "ERROR: Could not automatically identify the USB Wi-Fi dongle interface." >&2
+  echo "Detected Wi-Fi interfaces: ${WIFI_IFACES[*]}" >&2
+  exit 1
+fi
+
+for IFACE in "${WIFI_IFACES[@]}"; do
+  if [ "${IFACE}" != "${WAN_IF}" ]; then
+    AP_IF="${IFACE}"
+    break
+  fi
+done
+
+if [ -z "${AP_IF}" ]; then
+  echo "ERROR: Could not identify the AP-side Wi-Fi interface." >&2
+  exit 1
+fi
+
+if [ -f "${ENV_FILE}" ]; then
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  EXISTING_AP_SSID="${AP_SSID:-}"
+  EXISTING_AP_PSK="${AP_PSK:-}"
+  EXISTING_WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+fi
+
+if [ -n "${EXISTING_AP_SSID}" ] && [ -n "${EXISTING_AP_PSK}" ]; then
+  echo
+  echo "Current router AP name: ${EXISTING_AP_SSID}"
+  if prompt_yes_no "Keep the current router AP name and password?" "Y"; then
+    ENTERED_AP_SSID="${EXISTING_AP_SSID}"
+    ENTERED_AP_PSK="${EXISTING_AP_PSK}"
+  else
+    prompt_for_ap_ssid
+    prompt_for_ap_password
+  fi
+else
+  echo
+  echo "Choose the Wi-Fi name and password that clients will use to connect to this router."
+  prompt_for_ap_ssid
+  prompt_for_ap_password
+fi
+
+install -d -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 700 "${CONFIG_DIR}"
+install -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 600 /dev/null "${ENV_FILE}"
+
+{
+  printf 'export WAN_IF=%q\n' "${WAN_IF}"
+  printf 'export AP_IF=%q\n' "${AP_IF}"
+  printf 'export LAN_IP=%q\n' "10.42.0.1"
+  printf 'export LAN_CIDR=%q\n' "10.42.0.1/24"
+  printf 'export LAN_NET=%q\n' "10.42.0.0/24"
+  printf 'export DHCP_START=%q\n' "10.42.0.50"
+  printf 'export DHCP_END=%q\n' "10.42.0.150"
+  printf 'export AP_SSID=%q\n' "${ENTERED_AP_SSID}"
+  printf 'export AP_PSK=%q\n' "${ENTERED_AP_PSK}"
+  printf 'export WIFI_COUNTRY=%q\n' "${EXISTING_WIFI_COUNTRY}"
+} > "${ENV_FILE}"
+
+chown "${TARGET_USER}:${TARGET_GROUP}" "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
+
+echo
+echo "Wrote ${ENV_FILE} with:"
+echo "  WAN_IF=${WAN_IF}"
+echo "  AP_IF=${AP_IF}"
+echo "  AP_SSID=${ENTERED_AP_SSID}"
+echo "  AP password length=${#ENTERED_AP_PSK}"
+echo

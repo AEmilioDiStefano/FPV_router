@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+if [ -z "${TARGET_USER}" ] || [ "${TARGET_UID}" -eq 0 ]; then
+  echo "ERROR: Could not determine which regular Linux user should own the router environment file." >&2
+  exit 1
+fi
+
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+if [ -z "${USER_HOME}" ]; then
+  echo "ERROR: Could not determine the home directory for ${TARGET_USER}." >&2
+  exit 1
+fi
+
+CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+ENV_FILE="${CONFIG_DIR}/router.env"
+UPLINKS_FILE="/etc/fpv-router/uplinks.conf"
+
+if [ ! -f "${ENV_FILE}" ]; then
+  echo "ERROR: ${ENV_FILE} not found. Run fpv-router-detect-ifaces first." >&2
+  exit 1
+fi
+
+source "${ENV_FILE}"
+
+if [ ! -f "${UPLINKS_FILE}" ]; then
+  echo "ERROR: ${UPLINKS_FILE} not found." >&2
+  exit 1
+fi
+
+if [ -z "${AP_SSID:-}" ] || [ -z "${AP_PSK:-}" ]; then
+  echo "ERROR: AP_SSID and AP_PSK must both be set in ${ENV_FILE}." >&2
+  exit 1
+fi
+
+if [ "${#AP_PSK}" -lt 8 ] || [ "${#AP_PSK}" -gt 63 ]; then
+  echo "ERROR: AP_PSK must be between 8 and 63 characters." >&2
+  exit 1
+fi
+
+yaml_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "${value}"
+}
+
+ACCESS_POINTS_BLOCK=""
+declare -A SEEN_SSIDS=()
+
+while IFS='|' read -r SSID PSK; do
+  SSID="${SSID%$'\r'}"
+  PSK="${PSK%$'\r'}"
+  [ -z "${SSID}" ] && continue
+  case "${SSID}" in \#*) continue ;; esac
+  if [ -z "${PSK}" ]; then
+    echo "ERROR: Missing password for SSID '${SSID}' in ${UPLINKS_FILE}." >&2
+    exit 1
+  fi
+  if [[ "${SSID}" == *"|"* || "${PSK}" == *"|"* ]]; then
+    echo "ERROR: '|' is reserved as the SSID/password separator in ${UPLINKS_FILE}." >&2
+    exit 1
+  fi
+  if [ -n "${SEEN_SSIDS[$SSID]:-}" ]; then
+    echo "ERROR: Duplicate SSID '${SSID}' in ${UPLINKS_FILE}." >&2
+    exit 1
+  fi
+  SEEN_SSIDS["$SSID"]=1
+  ACCESS_POINTS_BLOCK+="        \"$(yaml_escape "${SSID}")\":\n"
+  ACCESS_POINTS_BLOCK+="          password: \"$(yaml_escape "${PSK}")\"\n"
+done < "${UPLINKS_FILE}"
+
+if [ -z "${ACCESS_POINTS_BLOCK}" ]; then
+  echo "ERROR: No upstream Wi-Fi networks were found in ${UPLINKS_FILE}." >&2
+  exit 1
+fi
+
+mkdir -p /etc/netplan
+cat > /etc/netplan/01-router.yaml <<EOF_NETPLAN
+network:
+  version: 2
+  renderer: networkd
+
+  wifis:
+    ${WAN_IF}:
+      dhcp4: true
+      dhcp4-overrides:
+        route-metric: 100
+      optional: true
+      access-points:
+$(printf '%b' "${ACCESS_POINTS_BLOCK}")
+EOF_NETPLAN
+
+chmod 600 /etc/netplan/01-router.yaml
+
+mkdir -p /etc/systemd/network
+rm -f /etc/systemd/network/10-fpv-wan.network
+cat > /etc/systemd/network/11-fpv-ap.network <<EOF_AP_NETWORK
+[Match]
+Name=${AP_IF}
+
+[Network]
+Address=${LAN_CIDR}
+ConfigureWithoutCarrier=yes
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+EOF_AP_NETWORK
+
+mkdir -p /etc/hostapd
+cat > /etc/hostapd/hostapd.conf <<EOF_HOSTAPD
+interface=${AP_IF}
+driver=nl80211
+
+ssid=${AP_SSID}
+hw_mode=g
+channel=6
+ieee80211n=1
+wmm_enabled=1
+
+auth_algs=1
+ignore_broadcast_ssid=0
+
+wpa=2
+wpa_passphrase=${AP_PSK}
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+
+country_code=${WIFI_COUNTRY}
+ieee80211d=1
+EOF_HOSTAPD
+
+cat > /etc/default/hostapd <<EOF_DEFAULT_HOSTAPD
+DAEMON_CONF="/etc/hostapd/hostapd.conf"
+DAEMON_OPTS=""
+EOF_DEFAULT_HOSTAPD
+
+mkdir -p /etc/systemd/system/hostapd.service.d
+cat > /etc/systemd/system/hostapd.service.d/override.conf <<EOF_HOSTAPD_OVERRIDE
+[Service]
+ExecStartPre=
+ExecStartPre=/usr/sbin/rfkill unblock all
+ExecStartPre=/bin/sh -c '/usr/sbin/ip link set dev ${AP_IF} down || true'
+ExecStartPre=/bin/sh -c '/usr/sbin/iw dev ${AP_IF} set type __ap || true'
+ExecStartPre=/bin/sh -c '/usr/sbin/ip link set dev ${AP_IF} up || true'
+EOF_HOSTAPD_OVERRIDE
+
+cat > /etc/dnsmasq.conf <<EOF_DNSMASQ
+interface=${AP_IF}
+bind-interfaces
+listen-address=${LAN_IP}
+port=0
+
+dhcp-range=${DHCP_START},${DHCP_END},255.255.255.0,12h
+dhcp-option=option:router,${LAN_IP}
+dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
+EOF_DNSMASQ
+
+cat > /etc/sysctl.d/99-router.conf <<'EOF_ROUTER_SYSCTL'
+net.ipv4.ip_forward=1
+EOF_ROUTER_SYSCTL
+
+cat > /etc/sysctl.d/99-fpv.conf <<'EOF_FPV_SYSCTL'
+net.core.rmem_max=26214400
+net.core.wmem_max=26214400
+net.ipv4.udp_rmem_min=16384
+net.ipv4.udp_wmem_min=16384
+net.ipv4.tcp_low_latency=1
+EOF_FPV_SYSCTL
+
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/volatile.conf <<'EOF_JOURNAL'
+[Journal]
+Storage=volatile
+RuntimeMaxUse=64M
+EOF_JOURNAL
+
+cat > /etc/systemd/system/wifi-powersave-off.service <<EOF_WIFI_PS
+[Unit]
+Description=Disable WiFi power saving
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/iw dev ${AP_IF} set power_save off || true'
+ExecStart=/bin/sh -c '/usr/sbin/iw dev ${WAN_IF} set power_save off || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF_WIFI_PS
+
+echo "Rendered router configuration."

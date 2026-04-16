@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -u
+
+FAILED=0
+
+pass() { printf '[PASS] %s\n' "$1"; }
+fail() { printf '[FAIL] %s\n' "$1"; FAILED=1; }
+info() { printf '[INFO] %s\n' "$1"; }
+
+check_absent() {
+  local path="$1"
+  local label="$2"
+  if [ ! -e "$path" ]; then
+    pass "${label} is absent"
+  else
+    fail "${label} is still present at ${path}"
+  fi
+}
+
+check_not_active() {
+  local unit="$1"
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    fail "${unit} is still active"
+  else
+    pass "${unit} is not active"
+  fi
+}
+
+check_not_enabled() {
+  local unit="$1"
+  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    fail "${unit} is still enabled"
+  else
+    pass "${unit} is not enabled"
+  fi
+}
+
+check_absent "/etc/netplan/01-router.yaml" "Router netplan file"
+check_absent "/etc/systemd/network/11-fpv-ap.network" "AP-side networkd file"
+check_absent "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg" "Cloud-init network-disable file"
+check_absent "$HOME/.config/fpv-router/router.env" "Router environment file"
+check_absent "/etc/fpv-router/uplinks.conf" "Remembered uplink file"
+
+check_not_active hostapd.service
+check_not_active dnsmasq.service
+check_not_active wifi-powersave-off.service
+check_not_active netfilter-persistent.service
+
+check_not_enabled hostapd.service
+check_not_enabled dnsmasq.service
+check_not_enabled wifi-powersave-off.service
+check_not_enabled netfilter-persistent.service
+
+if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
+  fail "Router-side static IP 10.42.0.1/24 is still present"
+else
+  pass "Router-side static IP 10.42.0.1/24 is not present"
+fi
+
+if [ -f /etc/netplan/50-cloud-init.yaml ]; then
+  pass "cloud-init netplan file is present for the normal first-boot-style SSH path"
+elif [ -f /etc/netplan/50-cloud-init.yaml.disabled ]; then
+  fail "cloud-init netplan file is still disabled"
+else
+  info "cloud-init netplan file was not found; if SSH works over the normal upstream path, continue"
+fi
+
+if [ "${FAILED}" -ne 0 ]; then
+  echo
+  echo "Reset check found one or more problems."
+  echo "Re-run Step 3 or reflash the microSD card if the Pi still does not behave like a pre-router system."
+  exit 1
+fi
+
+echo
+echo "Reset check passed. The Pi is ready to continue with the router setup."

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${EUID}" -ne 0 ]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+TARGET_UID="$(id -u "${TARGET_USER}" 2>/dev/null || echo -1)"
+TARGET_GROUP="$(id -gn "${TARGET_USER}" 2>/dev/null || true)"
+USER_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+RESET_NEEDED=0
+declare -a RESET_REASONS=()
+
+CONFIG_DIR=""
+BASHRC_FILE=""
+if [ -n "${TARGET_USER}" ] && [ "${TARGET_UID}" -ge 1 ] && [ -n "${USER_HOME}" ]; then
+  CONFIG_DIR="${USER_HOME}/.config/fpv-router"
+  BASHRC_FILE="${USER_HOME}/.bashrc"
+fi
+
+mark_reset_needed() {
+  local reason="$1"
+  RESET_NEEDED=1
+  RESET_REASONS+=("${reason}")
+}
+
+check_path_for_reset() {
+  local path="$1"
+  local reason="$2"
+  if [ -e "${path}" ]; then
+    mark_reset_needed "${reason}"
+  fi
+}
+
+check_unit_active_for_reset() {
+  local unit="$1"
+  if systemctl is-active --quiet "${unit}" 2>/dev/null; then
+    mark_reset_needed "${unit} is active"
+  fi
+}
+
+check_unit_enabled_for_reset() {
+  local unit="$1"
+  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+    mark_reset_needed "${unit} is enabled"
+  fi
+}
+
+check_path_for_reset /etc/netplan/01-router.yaml "router netplan file exists"
+check_path_for_reset /etc/systemd/network/11-fpv-ap.network "AP-side networkd file exists"
+check_path_for_reset /etc/systemd/network/10-fpv-wan.network "WAN-side networkd file exists"
+check_path_for_reset /etc/systemd/system/wifi-powersave-off.service "wifi-powersave-off service file exists"
+check_path_for_reset /etc/systemd/system/hostapd.service.d/override.conf "hostapd override exists"
+check_path_for_reset /etc/sysctl.d/99-router.conf "router sysctl file exists"
+check_path_for_reset /etc/sysctl.d/99-fpv.conf "FPV sysctl file exists"
+check_path_for_reset /etc/systemd/journald.conf.d/volatile.conf "journald override exists"
+check_path_for_reset /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg "cloud-init networking is disabled"
+check_path_for_reset /etc/netplan/50-cloud-init.yaml.disabled "cloud-init netplan file is still disabled"
+check_path_for_reset /etc/iptables/rules.v4 "saved IPv4 iptables rules exist"
+check_path_for_reset /etc/iptables/rules.v6 "saved IPv6 iptables rules exist"
+
+check_unit_active_for_reset hostapd.service
+check_unit_active_for_reset dnsmasq.service
+check_unit_active_for_reset wifi-powersave-off.service
+check_unit_active_for_reset netfilter-persistent.service
+
+check_unit_enabled_for_reset hostapd.service
+check_unit_enabled_for_reset dnsmasq.service
+check_unit_enabled_for_reset wifi-powersave-off.service
+check_unit_enabled_for_reset netfilter-persistent.service
+
+if ip -4 addr show | grep -Eq '\b10\.42\.0\.1/24\b'; then
+  mark_reset_needed "router-side static IP 10.42.0.1/24 is still present"
+fi
+
+if [ "${RESET_NEEDED}" -eq 0 ]; then
+  echo
+  echo "No reset is needed."
+  echo "This Pi already looks like a clean pre-router system, so you can continue to Step 4 in this same SSH session."
+  exit 0
+fi
+
+echo
+echo "A reset is needed. Cleaning up the following router-state indicators:"
+printf '  - %s\n' "${RESET_REASONS[@]}"
+echo
+
+disable_unit_if_present() {
+  local unit="$1"
+  if systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qxF "${unit}"; then
+    systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+  fi
+}
+
+disable_unit_if_present hostapd.service
+disable_unit_if_present dnsmasq.service
+disable_unit_if_present wifi-powersave-off.service
+disable_unit_if_present netfilter-persistent.service
+
+iptables -F >/dev/null 2>&1 || true
+iptables -t nat -F >/dev/null 2>&1 || true
+sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
+
+rm -f /etc/iptables/rules.v4
+rm -f /etc/iptables/rules.v6
+
+rm -f /etc/netplan/01-router.yaml
+rm -f /etc/systemd/network/11-fpv-ap.network
+rm -f /etc/systemd/network/10-fpv-wan.network
+rm -f /etc/systemd/system/wifi-powersave-off.service
+rm -f /etc/systemd/system/hostapd.service.d/override.conf
+rmdir /etc/systemd/system/hostapd.service.d 2>/dev/null || true
+rm -f /etc/hostapd/hostapd.conf
+rm -f /etc/default/hostapd
+rm -f /etc/dnsmasq.conf
+rm -f /etc/sysctl.d/99-router.conf
+rm -f /etc/sysctl.d/99-fpv.conf
+rm -f /etc/systemd/journald.conf.d/volatile.conf
+
+rm -f /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+if [ -f /etc/netplan/50-cloud-init.yaml.disabled ] && [ ! -f /etc/netplan/50-cloud-init.yaml ]; then
+  mv /etc/netplan/50-cloud-init.yaml.disabled /etc/netplan/50-cloud-init.yaml
+fi
+
+rm -f /etc/fpv-router/uplinks.conf
+rmdir /etc/fpv-router 2>/dev/null || true
+
+if [ -n "${CONFIG_DIR}" ]; then
+  rm -f "${CONFIG_DIR}/router.env"
+  rmdir "${CONFIG_DIR}" 2>/dev/null || true
+fi
+
+if [ -n "${BASHRC_FILE}" ] && [ -f "${BASHRC_FILE}" ]; then
+  LINE='source ~/.config/fpv-router/router.env 2>/dev/null || true'
+  TMP_FILE="$(mktemp)"
+  grep -vxF "${LINE}" "${BASHRC_FILE}" > "${TMP_FILE}" || true
+  install -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 644 "${TMP_FILE}" "${BASHRC_FILE}" 2>/dev/null || cat "${TMP_FILE}" > "${BASHRC_FILE}"
+  rm -f "${TMP_FILE}"
+fi
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+netplan generate >/dev/null 2>&1 || true
+
+echo
+echo "The Pi has been returned to the pre-router state used by this tutorial."
+echo "It will reboot now."
+echo
+sleep 2
+reboot
